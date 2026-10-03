@@ -1,7 +1,7 @@
 // ============================================================================
 // 1. GLOBALE KONSTANTEN, KATEGORIE-DATENBANK & INITIALER STATE
 // ============================================================================
-const CURRENT_APP_VERSION = 'v6.2.0';
+const CURRENT_APP_VERSION = 'v6.8.2';
 const STORAGE_DATA_KEY = 'barrierefreie_finanzen_enc_v1';
 const STORAGE_SALT_KEY = 'barrierefreie_finanzen_salt_v1';
 const STORAGE_THEME_KEY = 'barrierefreie_finanzen_theme_v1';
@@ -623,7 +623,8 @@ let appState = {
   recurring: [],
   budgets: {},
   customCategories: { exp: {}, inc: {}, trf: {} },
-  wishlist: []
+  wishlist: [],
+  shoppingList: []
 };
 
 // ============================================================================
@@ -796,311 +797,874 @@ function renderExpenseRankings(expenseList) {
 // ----------------------------------------------------------------------------
 // C. LIQUIDITÄTS- & KONTODECKUNGS-WARNUNG
 // ----------------------------------------------------------------------------
-function checkLiquidityWarning(currentBalances) {
+function checkLiquidityWarning(periodEndBalances) {
   const alertBox = document.getElementById('overview-liquidity-alert');
   if (!alertBox) return;
 
   const todayStr = new Date().toISOString().split('T')[0];
-  const currentMonthPrefix = todayStr.substring(0, 7);
+  const year = (typeof selectedYear !== 'undefined' && selectedYear !== null) ? selectedYear : new Date().getFullYear();
+  const month = (typeof selectedMonth !== 'undefined' && selectedMonth !== null) ? selectedMonth : new Date().getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const mFormatted = String(month + 1).padStart(2, '0');
+  const monthStartStr = `${year}-${mFormatted}-01`;
+  const monthEndStr = `${year}-${mFormatted}-${String(daysInMonth).padStart(2, '0')}`;
 
-  // Calculate upcoming planned transactions and recurring items until end of month
-  const upcomingTx = appState.transactions.filter(t => t.date.startsWith(currentMonthPrefix) && t.date > todayStr && t.type === 'expense');
-  const d = new Date();
-  const recList = getRecurringTransactionsForMonth(d.getFullYear(), d.getMonth()).filter(r => r.date > todayStr && r.type === 'expense');
+  // Wenn der betrachtete Monat bereits in der Vergangenheit liegt, keine Fälligkeitswarnung
+  if (monthEndStr < todayStr) {
+    alertBox.style.display = 'none';
+    checkContractReminders();
+    return;
+  }
+
+  // Simulations-Start: Heute (oder Monatsanfang bei Zukunftsmonaten)
+  const evalStartStr = (todayStr > monthStartStr) ? todayStr : monthStartStr;
+  const startBalances = calculateBalancesUpToDate(evalStartStr);
+
+  // Anstehende Buchungen von morgen (oder nach evalStartStr) bis zum Monatsende
+  const upcomingTx = (appState.transactions || []).filter(t => t.date && t.date > evalStartStr && t.date <= monthEndStr);
+  const recList = getRecurringTransactionsForMonth(year, month).filter(r => r.date && r.date > evalStartStr && r.date <= monthEndStr);
   const allUpcoming = [...upcomingTx, ...recList];
 
-  const upcomingTotal = allUpcoming.reduce((sum, t) => sum + Number(t.amount || 0), 0);
-  const bankBalance = currentBalances ? (currentBalances.bank || 0) : 0;
+  // Chronologisch sortieren
+  allUpcoming.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 
-  if (upcomingTotal > 0 && bankBalance < upcomingTotal) {
-    const diff = upcomingTotal - bankBalance;
+  // Verlauf für jedes Konto simulieren
+  const accStats = {};
+  (appState.accounts || []).forEach(acc => {
+    const cur = startBalances[acc.id] !== undefined ? startBalances[acc.id] : 0;
+    accStats[acc.id] = {
+      acc: acc,
+      startBal: cur,
+      runningBal: cur,
+      lowestBal: cur,
+      totalExpenses: 0,
+      totalIncome: 0,
+      dispo: Number(acc.dispoLimit || 0),
+      shortfall: 0,
+      coveredAmount: 0,
+      coveredBy: '',
+      uncoveredShortfall: 0
+    };
+  });
+
+  allUpcoming.forEach(item => {
+    const amt = Number(item.amount || 0);
+    if (item.type === 'expense' && item.account && accStats[item.account]) {
+      accStats[item.account].runningBal -= amt;
+      accStats[item.account].totalExpenses += amt;
+      accStats[item.account].lowestBal = Math.min(accStats[item.account].lowestBal, accStats[item.account].runningBal);
+    } else if (item.type === 'income' && item.account && accStats[item.account]) {
+      accStats[item.account].runningBal += amt;
+      accStats[item.account].totalIncome += amt;
+      accStats[item.account].lowestBal = Math.min(accStats[item.account].lowestBal, accStats[item.account].runningBal);
+    } else if (item.type === 'transfer' && item.fromAccount && item.toAccount) {
+      if (accStats[item.fromAccount]) {
+        accStats[item.fromAccount].runningBal -= amt;
+        accStats[item.fromAccount].totalExpenses += amt;
+        accStats[item.fromAccount].lowestBal = Math.min(accStats[item.fromAccount].lowestBal, accStats[item.fromAccount].runningBal);
+      }
+      if (accStats[item.toAccount]) {
+        accStats[item.toAccount].runningBal += amt;
+        accStats[item.toAccount].totalIncome += amt;
+        accStats[item.toAccount].lowestBal = Math.min(accStats[item.toAccount].lowestBal, accStats[item.toAccount].runningBal);
+      }
+    }
+  });
+
+  // Echten Fehlbetrag ermitteln (nur wenn Guthaben + Dispo unter 0 fällt!)
+  (appState.accounts || []).forEach(acc => {
+    const st = accStats[acc.id];
+    if (!st) return;
+    const effectiveLowest = st.lowestBal + st.dispo;
+    if (effectiveLowest < 0) {
+      st.shortfall = Math.round(Math.abs(effectiveLowest) * 100) / 100;
+    } else {
+      st.shortfall = 0;
+    }
+    st.uncoveredShortfall = st.shortfall;
+  });
+
+  // Auto-Deckungskonten anrechnen: Nur belasten, wenn das Primärkonto WIRKLICH nicht ausreicht!
+  (appState.accounts || []).forEach(acc => {
+    const st = accStats[acc.id];
+    if (!st || st.shortfall <= 0) return;
+
+    if (acc.hasBackupAccount && acc.backupAccountId && accStats[acc.backupAccountId]) {
+      const backupSt = accStats[acc.backupAccountId];
+      const backupAvailable = backupSt.lowestBal + backupSt.dispo;
+
+      if (backupAvailable >= st.shortfall) {
+        // Vollständig gedeckt
+        st.coveredAmount = st.shortfall;
+        st.coveredBy = backupSt.acc.name;
+        st.uncoveredShortfall = 0;
+        backupSt.lowestBal -= st.shortfall;
+      } else if (backupAvailable > 0) {
+        // Teilweise gedeckt
+        st.coveredAmount = Math.round(backupAvailable * 100) / 100;
+        st.coveredBy = backupSt.acc.name;
+        st.uncoveredShortfall = Math.round((st.shortfall - backupAvailable) * 100) / 100;
+        backupSt.lowestBal -= backupAvailable;
+      } else {
+        // Deckungskonto selbst leer
+        st.coveredAmount = 0;
+        st.uncoveredShortfall = st.shortfall;
+      }
+    }
+  });
+
+  // Warnungen und Benachrichtigungen zusammenstellen
+  const alertItems = [];
+
+  (appState.accounts || []).forEach(acc => {
+    const st = accStats[acc.id];
+    if (!st) return;
+
+    // Nur bei echter Unterdeckung warnen!
+    if (st.uncoveredShortfall > 0) {
+      let backupNote = '';
+      if (acc.hasBackupAccount && acc.backupAccountId && st.coveredAmount > 0) {
+        backupNote = ` (davon ${formatCurrency(st.coveredAmount)} über ${escapeHTML(st.coveredBy)} gedeckt, Rest ungedeckt)`;
+      } else if (acc.hasBackupAccount && acc.backupAccountId && accStats[acc.backupAccountId]) {
+        backupNote = ` (Deckungskonto ${escapeHTML(accStats[acc.backupAccountId].acc.name)} reicht ebenfalls nicht aus)`;
+      }
+      alertItems.push(`
+        <div style="display: flex; align-items: flex-start; gap: 12px; margin-bottom: 4px;">
+          <span style="font-size: 24px;" aria-hidden="true">⚠️</span>
+          <div>
+            <strong style="color: var(--text-primary); font-size: 15px;">Achtung Kontodeckung auf ${escapeHTML(acc.name)}:</strong>
+            <div style="font-size: 14px; margin-top: 2px;">
+              Bis zum Monatsende stehen noch <strong>${formatCurrency(st.totalExpenses)}</strong> an Ausgaben &amp; Daueraufträgen an.
+              Aktuell verfügbar: <strong>${formatCurrency(Math.max(0, st.startBal))}</strong>${st.dispo > 0 ? ` (+ Dispo: ${formatCurrency(st.dispo)})` : ''}.
+              Drohender Fehlbetrag: <strong style="color: #D32F2F;">${formatCurrency(st.uncoveredShortfall)}</strong>${backupNote}.
+            </div>
+          </div>
+        </div>
+      `);
+    } else if (st.coveredAmount > 0) {
+      // Ruhige, positive Info, dass die Auto-Deckung greift und abgesichert ist
+      alertItems.push(`
+        <div style="display: flex; align-items: flex-start; gap: 12px; margin-bottom: 4px;">
+          <span style="font-size: 22px;" aria-hidden="true">🛡️</span>
+          <div>
+            <strong style="color: #1B5E20; font-size: 15px;">Automatische Deckung aktiv für ${escapeHTML(acc.name)}:</strong>
+            <div style="font-size: 14px; margin-top: 2px; color: var(--text-primary);">
+              Für anstehende Zahlungen (${formatCurrency(st.totalExpenses)}) werden voraussichtlich <strong>${formatCurrency(st.coveredAmount)}</strong> automatisch über <strong>${escapeHTML(st.coveredBy)}</strong> ausgeglichen. Dort ist ausreichend Guthaben vorhanden.
+            </div>
+          </div>
+        </div>
+      `);
+    }
+  });
+
+  if (alertItems.length > 0) {
     alertBox.style.display = 'flex';
     alertBox.className = 'liquidity-alert-box';
-    alertBox.innerHTML = `
-      <span style="font-size: 24px;" aria-hidden="true">⚠️</span>
-      <div>
-        <strong>Achtung Kontodeckung:</strong> Bis zum Monatsende stehen noch <strong>${formatCurrency(upcomingTotal)}</strong> an geplanten Ausgaben &amp; Daueraufträgen an. Auf dem Bankkonto sind aktuell <strong>${formatCurrency(bankBalance)}</strong> (Fehlbetrag: <strong>${formatCurrency(diff)}</strong>).
-      </div>
-    `;
+    alertBox.innerHTML = alertItems.join('<hr style="border: 0; border-top: 1px solid rgba(0,0,0,0.1); margin: 8px 0;">');
   } else {
     alertBox.style.display = 'none';
+  }
+
+  checkContractReminders();
+}
+
+function checkContractReminders() {
+  const container = document.getElementById('overview-contract-alerts');
+  if (!container) return;
+
+  const today = new Date();
+  const todayStr = today.toISOString().split('T')[0];
+  const alerts = [];
+
+  (appState.recurring || []).forEach(rec => {
+    if (rec.active === false) return;
+
+    // 1. Gratis-Zeitraum (Probe-Abo)
+    if (rec.trialActive && rec.trialEndDate) {
+      const endD = new Date(rec.trialEndDate + 'T00:00:00');
+      const diffDays = Math.ceil((endD - today) / (1000 * 60 * 60 * 24));
+      const warnThreshold = (rec.trialUnit === 'months') ? 7 : 3;
+      if (diffDays >= 0 && diffDays <= warnThreshold) {
+        alerts.push({
+          type: 'trial',
+          icon: '🎁',
+          bg: 'rgba(156, 39, 176, 0.1)',
+          border: '#9C27B0',
+          title: `Probe-Abo läuft aus: ${escapeHTML(rec.name || rec.category)}`,
+          msg: `Die kostenlose Testphase endet am <strong>${formatDateGerman(rec.trialEndDate)}</strong> (${diffDays === 0 ? 'heute!' : `in ${diffDays} Tag(en)`}). Wenn du nicht kündigst, werden danach regulär <strong>${formatCurrency(rec.amount)}</strong> abgebucht.`
+        });
+      }
+    }
+
+    // 2. Rabatt-Phase läuft aus
+    if (rec.discountActive && rec.discountEndYear !== undefined && rec.discountEndMonth !== undefined) {
+      const curVal = today.getFullYear() * 12 + today.getMonth();
+      const discVal = rec.discountEndYear * 12 + rec.discountEndMonth;
+      if (discVal - curVal === 0 || discVal - curVal === 1) {
+        alerts.push({
+          type: 'discount',
+          icon: '🏷️',
+          bg: 'rgba(255, 152, 0, 0.1)',
+          border: '#FF9800',
+          title: `Rabattpreis endet bald: ${escapeHTML(rec.name || rec.category)}`,
+          msg: `Der vergünstigte Preis von <strong>${formatCurrency(rec.discountAmount)}</strong> gilt nur noch bis <strong>${MONTH_NAMES[rec.discountEndMonth]} ${rec.discountEndYear}</strong>. Danach steigt der Betrag auf <strong>${formatCurrency(rec.regularAmount || rec.amount)}</strong>.`
+        });
+      }
+    }
+
+    // 3. Kündigungsfrist / Mindestlaufzeit
+    if (rec.hasContractDetails && rec.minTermDate) {
+      const minD = new Date(rec.minTermDate + 'T00:00:00');
+      const diffDays = Math.ceil((minD - today) / (1000 * 60 * 60 * 24));
+      if (diffDays >= 0 && diffDays <= 30) {
+        alerts.push({
+          type: 'contract',
+          icon: '📝',
+          bg: 'rgba(33, 150, 243, 0.1)',
+          border: '#2196F3',
+          title: `Vertragslaufzeit prüfen: ${escapeHTML(rec.name || rec.category)}`,
+          msg: `Die Mindestlaufzeit endet am <strong>${formatDateGerman(rec.minTermDate)}</strong> (${diffDays === 0 ? 'heute!' : `in ${diffDays} Tag(en)`}). Kündigungsfrist: <em>${escapeHTML(rec.noticePeriod || 'Standard')}</em>${rec.contractNumber ? ` | Kd-Nr: <strong>${escapeHTML(rec.contractNumber)}</strong>` : ''}.`
+        });
+      }
+    }
+  });
+
+  if (alerts.length === 0) {
+    container.style.display = 'none';
+    container.innerHTML = '';
+  } else {
+    container.style.display = 'flex';
+    container.innerHTML = alerts.map(a => `
+      <div class="liquidity-alert-box" style="background: ${a.bg}; border-left-color: ${a.border};">
+        <span style="font-size: 24px;" aria-hidden="true">${a.icon}</span>
+        <div>
+          <strong style="color: var(--text-primary); display: block; margin-bottom: 2px;">${a.title}</strong>
+          <span style="font-size: 14px;">${a.msg}</span>
+        </div>
+      </div>
+    `).join('');
   }
 }
 
 // ----------------------------------------------------------------------------
 // D. EINKAUFSZETTEL- & KASSENZETTEL-RECHNER
 // ----------------------------------------------------------------------------
-let shoppingCart = [];
+// EINKAUFSLISTE & CHECKLISTE (v6.8.0)
+// ----------------------------------------------------------------------------
+let currentShoppingFilter = 'all';
 
-function toggleShoppingCalculator() {
-  const details = document.getElementById('details-shopping-calc');
-  if (!details) return;
-  const isOpening = !details.open;
-  details.open = isOpening;
-  if (isOpening) {
-    populateShoppingDropdowns();
-    renderShoppingCart();
-    const itemInput = document.getElementById('shopping-item-name');
-    if (itemInput) itemInput.focus();
-    announceNVDA('Einkaufs- und Kassenrechner geöffnet.');
-  } else {
-    announceNVDA('Einkaufs- und Kassenrechner geschlossen.');
+function ensureShoppingListInitialized() {
+  if (!appState.shoppingList || !Array.isArray(appState.shoppingList)) {
+    appState.shoppingList = [];
   }
 }
 
+function renderShoppingList() {
+  ensureShoppingListInitialized();
+  const listEl = document.getElementById('shopping-items-list');
+  if (!listEl) return;
+
+  const allItems = appState.shoppingList;
+  const openItems = allItems.filter(i => !i.checked);
+  const doneItems = allItems.filter(i => i.checked);
+
+  // Update counter badges
+  const cAll = document.getElementById('shopping-count-all');
+  const cOpen = document.getElementById('shopping-count-open');
+  const cDone = document.getElementById('shopping-count-done');
+  if (cAll) cAll.textContent = allItems.length;
+  if (cOpen) cOpen.textContent = openItems.length;
+  if (cDone) cDone.textContent = doneItems.length;
+
+  // Filter items
+  let displayItems = allItems;
+  if (currentShoppingFilter === 'open') {
+    displayItems = openItems;
+  } else if (currentShoppingFilter === 'done') {
+    displayItems = doneItems;
+  }
+
+  // Calculate totals
+  const openTotal = openItems.reduce((sum, item) => sum + (Number(item.price) || 0), 0);
+  const doneTotal = doneItems.reduce((sum, item) => sum + (Number(item.price) || 0), 0);
+
+  const summaryEl = document.getElementById('shopping-summary-text');
+  if (summaryEl) {
+    if (allItems.length === 0) {
+      summaryEl.innerHTML = '<strong>Deine Einkaufsliste ist leer.</strong> Setze oben Artikel drauf oder füge eine WhatsApp-Liste ein!';
+    } else {
+      summaryEl.innerHTML = `
+        <strong>${openItems.length} Artikel noch offen</strong> (Geschätzt: <strong>${formatCurrency(openTotal)}</strong>) &bull; 
+        ${doneItems.length} abgehakt (${formatCurrency(doneTotal)})
+      `;
+    }
+  }
+
+  const bookBtn = document.getElementById('btn-open-shopping-book');
+  if (bookBtn) {
+    bookBtn.disabled = allItems.length === 0;
+    if (doneItems.length > 0) {
+      bookBtn.innerHTML = `<span>💳 <strong>${doneItems.length} erledigte Artikel buchen (${formatCurrency(doneTotal || openTotal)})</strong></span>`;
+    } else {
+      bookBtn.innerHTML = `<span>💳 <strong>Einkauf als Ausgabe buchen (${formatCurrency(openTotal)})</strong></span>`;
+    }
+  }
+
+  if (displayItems.length === 0) {
+    if (allItems.length === 0) {
+      listEl.innerHTML = `
+        <li class="shopping-empty-hint">
+          🛒 Noch keine Artikel auf der Einkaufsliste.<br>
+          Tippe oben einen Artikel ein, füge Text aus WhatsApp ein oder lade ein Foto / PDF hoch!
+        </li>`;
+    } else if (currentShoppingFilter === 'open') {
+      listEl.innerHTML = `
+        <li class="shopping-empty-hint">
+          🎉 Alles erledigt! Keine offenen Artikel mehr auf der Liste.
+        </li>`;
+    } else if (currentShoppingFilter === 'done') {
+      listEl.innerHTML = `
+        <li class="shopping-empty-hint">
+          Noch keine Artikel abgehakt. Hake Artikel an, sobald du sie im Einkaufswagen hast!
+        </li>`;
+    }
+    return;
+  }
+
+  listEl.innerHTML = displayItems.map(item => {
+    const isDone = Boolean(item.checked);
+    const priceText = item.price && Number(item.price) > 0 ? formatCurrency(Number(item.price)) : '';
+    const storeText = item.store ? escapeHTML(item.store) : '';
+
+    return `
+      <li class="shopping-item-row ${isDone ? 'is-done' : ''}" id="shopping-item-${item.id}">
+        <div class="shopping-item-main">
+          <label class="shopping-checkbox-label" for="chk-shop-${item.id}">
+            <input 
+              type="checkbox" 
+              id="chk-shop-${item.id}" 
+              class="shopping-checkbox-input" 
+              ${isDone ? 'checked' : ''} 
+              onchange="toggleShoppingItem('${item.id}')"
+              aria-label="${escapeHTML(item.name)} als ${isDone ? 'offen' : 'erledigt'} markieren"
+            >
+            <span class="shopping-item-name">${escapeHTML(item.name)}</span>
+          </label>
+        </div>
+        <div class="shopping-item-meta">
+          ${priceText ? `<span class="shopping-badge-price" title="Preis">${priceText}</span>` : ''}
+          ${storeText ? `<span class="shopping-badge-store" title="Laden / Geschäft">${storeText}</span>` : ''}
+          <button 
+            type="button" 
+            class="shopping-btn-delete" 
+            onclick="deleteShoppingItem('${item.id}')" 
+            aria-label="${escapeHTML(item.name)} von der Einkaufsliste löschen"
+            title="Artikel löschen"
+          >✕</button>
+        </div>
+      </li>
+    `;
+  }).join('');
+}
+
+async function addShoppingItemFromForm(e) {
+  if (e) e.preventDefault();
+  ensureShoppingListInitialized();
+
+  const nameInput = document.getElementById('shopping-new-name');
+  const priceInput = document.getElementById('shopping-new-price');
+  const storeInput = document.getElementById('shopping-new-store');
+
+  if (!nameInput) return;
+  const name = nameInput.value.trim();
+  if (!name) return;
+
+  const rawPrice = priceInput && priceInput.value ? parseFloat(priceInput.value) : null;
+  const price = rawPrice && !isNaN(rawPrice) && rawPrice > 0 ? rawPrice : null;
+  const store = storeInput ? storeInput.value.trim() : '';
+
+  const newItem = {
+    id: 'shop_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+    name: name,
+    price: price,
+    store: store,
+    checked: false,
+    createdAt: Date.now()
+  };
+
+  appState.shoppingList.push(newItem);
+  await saveStateToEncryptedStorage();
+
+  nameInput.value = '';
+  if (priceInput) priceInput.value = '';
+  nameInput.focus();
+
+  renderShoppingList();
+  announceNVDA(`${name} zur Einkaufsliste hinzugefügt.`);
+}
+
+async function toggleShoppingItem(id) {
+  ensureShoppingListInitialized();
+  const item = appState.shoppingList.find(i => i.id === id);
+  if (!item) return;
+
+  item.checked = !item.checked;
+  await saveStateToEncryptedStorage();
+  renderShoppingList();
+
+  const status = item.checked ? 'erledigt abgehakt' : 'wieder als offen markiert';
+  announceNVDA(`${item.name} ${status}.`);
+}
+
+async function deleteShoppingItem(id) {
+  ensureShoppingListInitialized();
+  const idx = appState.shoppingList.findIndex(i => i.id === id);
+  if (idx === -1) return;
+
+  const removed = appState.shoppingList.splice(idx, 1)[0];
+  await saveStateToEncryptedStorage();
+  renderShoppingList();
+  announceNVDA(`${removed.name} von der Einkaufsliste gelöscht.`);
+}
+
+function setShoppingFilter(filter) {
+  currentShoppingFilter = filter;
+  ['all', 'open', 'done'].forEach(f => {
+    const btn = document.getElementById('shopping-filter-' + f);
+    if (btn) {
+      const isActive = f === filter;
+      btn.classList.toggle('active', isActive);
+      btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    }
+  });
+  renderShoppingList();
+  const filterNames = { all: 'Alle Artikel', open: 'Nur noch offene Artikel', done: 'Nur erledigte Artikel' };
+  announceNVDA(`Filter geändert auf: ${filterNames[filter] || filter}`);
+}
+
+async function clearDoneShoppingItems() {
+  ensureShoppingListInitialized();
+  const countBefore = appState.shoppingList.length;
+  appState.shoppingList = appState.shoppingList.filter(i => !i.checked);
+  const removedCount = countBefore - appState.shoppingList.length;
+
+  if (removedCount === 0) {
+    alert('Es gibt keine abgehakten Artikel zum Aufräumen.');
+    return;
+  }
+
+  await saveStateToEncryptedStorage();
+  renderShoppingList();
+  announceNVDA(`${removedCount} erledigte Artikel von der Einkaufsliste aufgeräumt.`);
+}
+
+async function clearEntireShoppingList() {
+  ensureShoppingListInitialized();
+  if (appState.shoppingList.length === 0) {
+    alert('Die Einkaufsliste ist bereits leer.');
+    return;
+  }
+
+  if (!confirm('Möchtest du wirklich alle Artikel von der Einkaufsliste löschen?')) {
+    return;
+  }
+
+  appState.shoppingList = [];
+  await saveStateToEncryptedStorage();
+  renderShoppingList();
+  announceNVDA('Einkaufsliste komplett geleert.');
+}
+
+function copyShoppingListAsText() {
+  ensureShoppingListInitialized();
+  if (appState.shoppingList.length === 0) {
+    alert('Die Einkaufsliste ist leer. Es gibt nichts zu kopieren.');
+    return;
+  }
+
+  const lines = ['🛒 *Einkaufsliste:*'];
+  const openItems = appState.shoppingList.filter(i => !i.checked);
+  const doneItems = appState.shoppingList.filter(i => i.checked);
+
+  if (openItems.length > 0) {
+    openItems.forEach(item => {
+      let meta = [];
+      if (item.store) meta.push(item.store);
+      if (item.price && Number(item.price) > 0) meta.push(formatCurrency(Number(item.price)));
+      const metaStr = meta.length > 0 ? ` (${meta.join(', ')})` : '';
+      lines.push(`- [ ] ${item.name}${metaStr}`);
+    });
+  }
+
+  if (doneItems.length > 0) {
+    lines.push('');
+    lines.push('✅ *Bereits erledigt:*');
+    doneItems.forEach(item => {
+      lines.push(`- [x] ~~${item.name}~~`);
+    });
+  }
+
+  const fullText = lines.join('\n');
+  navigator.clipboard.writeText(fullText).then(() => {
+    alert('✅ Einkaufsliste wurde in die Zwischenablage kopiert! Du kannst sie jetzt z. B. in WhatsApp mit Strg+V einfügen.');
+    announceNVDA('Einkaufsliste in Zwischenablage kopiert.');
+  }).catch(err => {
+    console.warn('Clipboard write failed:', err);
+    prompt('Einkaufsliste kopieren (Strg+C drücken):', fullText);
+  });
+}
+
+// ----------------------------------------------------------------------------
+// MODAL: WHATSAPP- & TEXT-IMPORT
+// ----------------------------------------------------------------------------
+function openShoppingPasteModal() {
+  const modal = document.getElementById('shopping-paste-modal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+  const ta = document.getElementById('shopping-paste-input');
+  if (ta) {
+    ta.value = '';
+    ta.focus();
+  }
+  const storeInput = document.getElementById('shopping-paste-store');
+  if (storeInput) storeInput.value = '';
+  announceNVDA('Dialog zum Einfügen von WhatsApp- oder Textlisten geöffnet.');
+}
+
+function closeShoppingPasteModal() {
+  const modal = document.getElementById('shopping-paste-modal');
+  if (modal) modal.style.display = 'none';
+  const btn = document.getElementById('shopping-new-name');
+  if (btn) btn.focus();
+}
+
+async function handleShoppingPasteSubmit(e) {
+  if (e) e.preventDefault();
+  const ta = document.getElementById('shopping-paste-input');
+  const storeInput = document.getElementById('shopping-paste-store');
+  if (!ta) return;
+
+  const rawText = ta.value;
+  const defaultStore = storeInput ? storeInput.value.trim() : '';
+
+  const addedCount = await parseAndImportShoppingText(rawText, defaultStore);
+  closeShoppingPasteModal();
+
+  if (addedCount > 0) {
+    alert(`✅ ${addedCount} Artikel wurden erfolgreich auf deine Einkaufsliste gesetzt!`);
+  } else {
+    alert('Es konnten keine Artikel im eingegebenen Text erkannt werden. Bitte überprüfe den Text.');
+  }
+}
+
+// Universal parser for WhatsApp text, bullet lists, OCR scans, notes, etc.
+async function parseAndImportShoppingText(rawText, defaultStore) {
+  ensureShoppingListInitialized();
+  if (!rawText || typeof rawText !== 'string') return 0;
+
+  const lines = rawText.split(/\r?\n/);
+  const itemsToAdd = [];
+
+  for (let line of lines) {
+    line = line.trim();
+    if (!line) continue;
+
+    // Skip generic header lines
+    if (/^(einkauf|einkaufsliste|liste|supermarkt|besorgen|rewe|aldi|lidl|edeka|hallo|moin)[s:!]*$/i.test(line)) {
+      continue;
+    }
+
+    // Strip bullet points, numbers, checkboxes
+    line = line.replace(/^[\s\-\*•–—\+■□\>]+/, '').trim();
+    line = line.replace(/^\d+[\.\)\-]\s*/, '').trim();
+    line = line.replace(/^\[[ xX✓✔]?\]\s*/, '').trim();
+    line = line.replace(/^[\u2610\u2611\u2612\u2705\u2713\u2714•]\s*/, '').trim();
+
+    if (!line) continue;
+
+    // Check for price at end of line (e.g. 2,49 € or 1.99 EUR or 3,50)
+    let price = null;
+    const priceMatch = line.match(/(?:(?:EUR|€)\s*([0-9]+[.,][0-9]{2})|([0-9]+[.,][0-9]{2})\s*(?:EUR|€|Euro)?)$/i);
+    if (priceMatch) {
+      const priceStr = priceMatch[1] || priceMatch[2];
+      const parsed = parseFloat(priceStr.replace(',', '.'));
+      if (!isNaN(parsed) && parsed > 0) {
+        price = parsed;
+        line = line.substring(0, priceMatch.index).trim();
+      }
+    }
+
+    // Check for store in parentheses / brackets e.g. (Rewe) or [Aldi] (avoid capturing package sizes like 10er, 500g)
+    let store = defaultStore || '';
+    const storeMatch = line.match(/[\(\[]([^\)\]]+)[\)\]]\s*$/);
+    if (storeMatch) {
+      const inside = storeMatch[1].trim();
+      const isPackSize = /^(\d+[\.,]?\d*\s*(?:er|g|kg|ml|l|stk|stück|st\.?|pack|pkg|dose|fl|flasche|beutel|bund|x|gl)?|\d+)$/i.test(inside);
+      if (!isPackSize) {
+        store = inside;
+        line = line.substring(0, storeMatch.index).trim();
+      }
+    }
+
+    // Strip trailing colons or commas
+    line = line.replace(/[,;:]+$/, '').trim();
+
+    if (!line) continue;
+
+    itemsToAdd.push({
+      id: 'shop_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+      name: line,
+      price: price,
+      store: store,
+      checked: false,
+      createdAt: Date.now()
+    });
+  }
+
+  if (itemsToAdd.length === 0) return 0;
+
+  appState.shoppingList.push(...itemsToAdd);
+  await saveStateToEncryptedStorage();
+  renderShoppingList();
+  announceNVDA(`${itemsToAdd.length} Artikel zur Einkaufsliste hinzugefügt.`);
+  return itemsToAdd.length;
+}
+
+// ----------------------------------------------------------------------------
+// DOKUMENT- & FOTO-UPLOAD FÜR EINKAUFSLISTE
+// ----------------------------------------------------------------------------
+async function handleShoppingDocumentSelect(files) {
+  if (!files || files.length === 0) return;
+  const file = files[0];
+
+  announceNVDA(`Dokument ${file.name} wird verarbeitet...`);
+
+  try {
+    // 1. Text- oder CSV-Datei
+    if (file.type === 'text/plain' || file.type === 'text/csv' || file.name.endsWith('.txt') || file.name.endsWith('.csv')) {
+      const text = await file.text();
+      const count = await parseAndImportShoppingText(text, '');
+      if (count > 0) {
+        alert(`✅ ${count} Artikel aus der Datei "${file.name}" wurden zur Einkaufsliste hinzugefügt!`);
+      } else {
+        alert('In der Textdatei wurden keine lesbaren Artikelzeilen gefunden.');
+      }
+      return;
+    }
+
+    // 2. PDF Datei
+    if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
+      const compressed = await compressReceiptFile(file);
+      let pdfText = '';
+      if (compressed.data) {
+        pdfText = extractTextFromPdfDataUrl(compressed.data);
+      }
+      if (!pdfText) {
+        // Fallback to OCR extractor
+        const ext = await extractTextFromReceipt(compressed);
+        pdfText = ext.recognizedText;
+      }
+
+      if (pdfText && pdfText.trim()) {
+        const count = await parseAndImportShoppingText(pdfText, '');
+        alert(`✅ ${count} Artikel aus dem PDF-Dokument übernommen!`);
+      } else {
+        alert('Aus dem PDF konnte kein Text ausgelesen werden. Bitte Text als WhatsApp-Nachricht oder TXT einfügen.');
+      }
+      return;
+    }
+
+    // 3. Bild / Foto / Kamera
+    if (file.type.startsWith('image/')) {
+      const compressed = await compressReceiptFile(file);
+      const ext = await extractTextFromReceipt(compressed);
+      const ocrText = ext.recognizedText || '';
+
+      if (ocrText && ocrText.trim()) {
+        const count = await parseAndImportShoppingText(ocrText, '');
+        if (count > 0) {
+          alert(`✅ ${count} Artikel wurden aus dem Foto/Beleg erkannt und zur Einkaufsliste hinzugefügt!`);
+          return;
+        }
+      }
+
+      // Falls OCR offline keinen sauberen Text liefert, Text-Modal anbieten
+      const modal = document.getElementById('shopping-paste-modal');
+      if (modal) {
+        openShoppingPasteModal();
+        const ta = document.getElementById('shopping-paste-input');
+        if (ta && ocrText) ta.value = ocrText;
+        alert('Das Bild wurde geladen. Du kannst den erkannten Text im geöffneten Fenster überprüfen und anpassen.');
+      }
+    }
+  } catch (err) {
+    console.error('Fehler beim Dokument-Upload für Einkaufsliste:', err);
+    alert('Fehler beim Lesen der Datei: ' + err.message);
+  } finally {
+    const input = document.getElementById('shopping-file-upload-input');
+    if (input) input.value = '';
+  }
+}
+
+// ----------------------------------------------------------------------------
+// EINKAUF ALS AUSGABE BUCHEN
+// ----------------------------------------------------------------------------
 function populateShoppingDropdowns() {
   ensureAccountsInitialized();
   const accSel = document.getElementById('shopping-book-account');
-  const subSel = document.getElementById('shopping-book-subcat');
+  const catSel = document.getElementById('shopping-book-category');
+
   if (accSel) {
     accSel.innerHTML = appState.accounts.map(a => `<option value="${escapeHTML(a.id)}">${escapeHTML(a.name)}</option>`).join('');
     applySymbolsToOptions(accSel);
   }
-  if (subSel) {
-    const subs = CATEGORIES_DB.exp['Lebensmittel, Supermarkt & Discounter'] || ['Rewe', 'Aldi', 'Lidl', 'Edeka'];
-    subSel.innerHTML = subs.map(s => `<option value="${escapeHTML(s)}">${escapeHTML(s)}</option>`).join('');
-    applySymbolsToOptions(subSel);
+
+  if (catSel) {
+    const expCategories = Object.keys(CATEGORIES_DB.exp || {});
+    catSel.innerHTML = expCategories.map(c => `<option value="${escapeHTML(c)}">${escapeHTML(c)}</option>`).join('');
+    // Default to Lebensmittel
+    if (expCategories.includes('Lebensmittel, Supermarkt & Discounter')) {
+      catSel.value = 'Lebensmittel, Supermarkt & Discounter';
+    }
+    applySymbolsToOptions(catSel);
+    onShoppingBookCatChange();
   }
 }
 
-function handleAddShoppingItem(e) {
-  e.preventDefault();
-  const nameInput = document.getElementById('shopping-item-name');
-  const priceInput = document.getElementById('shopping-item-price');
-  const name = nameInput.value.trim() || `Artikel #${shoppingCart.length + 1}`;
-  const price = parseFloat(priceInput.value);
+function onShoppingBookCatChange() {
+  const catSel = document.getElementById('shopping-book-category');
+  const subSel = document.getElementById('shopping-book-subcategory');
+  if (!catSel || !subSel) return;
 
-  if (isNaN(price) || price <= 0) return;
+  const selCat = catSel.value;
+  const subs = (CATEGORIES_DB.exp && CATEGORIES_DB.exp[selCat]) ? CATEGORIES_DB.exp[selCat] : ['Gesamt / Allgemein', 'Supermarkt', 'Sonstiges'];
 
-  shoppingCart.push({ name: name, price: price });
-  nameInput.value = '';
-  priceInput.value = '';
-  nameInput.focus();
-  renderShoppingCart();
-
-  const total = shoppingCart.reduce((s, i) => s + i.price, 0);
-  announceNVDA(`${name} für ${formatCurrency(price)} hinzugefügt. Zwischensumme: ${formatCurrency(total)}`);
+  subSel.innerHTML = subs.map(s => `<option value="${escapeHTML(s)}">${escapeHTML(s)}</option>`).join('');
+  applySymbolsToOptions(subSel);
 }
 
-function removeShoppingItem(idx) {
-  if (idx >= 0 && idx < shoppingCart.length) {
-    const removed = shoppingCart.splice(idx, 1)[0];
-    renderShoppingCart();
-    const total = shoppingCart.reduce((s, i) => s + i.price, 0);
-    announceNVDA(`${removed.name} entfernt. Neue Zwischensumme: ${formatCurrency(total)}`);
-  }
-}
-
-function clearShoppingCart() {
-  shoppingCart = [];
-  renderShoppingCart();
-  announceNVDA('Einkaufswagen geleert.');
-}
-
-function renderShoppingCart() {
-  const container = document.getElementById('shopping-cart-table-wrapper');
-  if (!container) return;
-
-  if (shoppingCart.length === 0) {
-    container.innerHTML = '<p class="field-hint" style="margin: 8px 0;">Noch keine Artikel im Einkaufswagen. Gib oben den ersten Artikel oder Preis ein!</p>';
+function openShoppingBookModal() {
+  ensureShoppingListInitialized();
+  const allItems = appState.shoppingList;
+  if (allItems.length === 0) {
+    alert('Deine Einkaufsliste ist leer. Füge zuerst Artikel hinzu.');
     return;
   }
 
-  const total = shoppingCart.reduce((s, i) => s + i.price, 0);
+  populateShoppingDropdowns();
 
-  container.innerHTML = `
-    <table class="shopping-table" aria-label="Einkaufsliste">
-      <thead>
-        <tr>
-          <th>Artikel</th>
-          <th style="text-align: right;">Preis</th>
-          <th style="width: 60px; text-align: center;">Aktion</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${shoppingCart.map((item, idx) => `
-          <tr>
-            <td>${escapeHTML(item.name)}</td>
-            <td style="text-align: right; font-weight: bold;">${formatCurrency(item.price)}</td>
-            <td style="text-align: center;">
-              <button type="button" class="btn btn-secondary" onclick="removeShoppingItem(${idx})" title="Artikel entfernen" aria-label="${escapeHTML(item.name)} entfernen" style="padding: 2px 8px; color: #f44336;">✕</button>
-            </td>
-          </tr>
-        `).join('')}
-        <tr class="shopping-total-row">
-          <td><strong>GESAMTSUMME (${shoppingCart.length} Artikel):</strong></td>
-          <td style="text-align: right; color: #2E7D32;"><strong>${formatCurrency(total)}</strong></td>
-          <td></td>
-        </tr>
-      </tbody>
-    </table>
-  `;
+  const doneItems = allItems.filter(i => i.checked);
+  const targetItems = doneItems.length > 0 ? doneItems : allItems;
+  const totalSum = targetItems.reduce((sum, item) => sum + (Number(item.price) || 0), 0);
+
+  const modal = document.getElementById('shopping-book-modal');
+  if (!modal) return;
+
+  const amtInput = document.getElementById('shopping-book-amount');
+  const dateInput = document.getElementById('shopping-book-date');
+  const noteInput = document.getElementById('shopping-book-note');
+  const hintEl = document.getElementById('shopping-book-hint');
+
+  if (amtInput) amtInput.value = totalSum > 0 ? totalSum.toFixed(2) : '';
+  if (dateInput) dateInput.value = new Date().toISOString().split('T')[0];
+  if (hintEl) {
+    hintEl.textContent = doneItems.length > 0
+      ? `Es werden ${doneItems.length} abgehakte Artikel verbucht. Passe den Betrag bei Bedarf an den Kassenzettel an:`
+      : `Es werden alle ${allItems.length} Artikel der Liste verbucht:`;
+  }
+
+  if (noteInput) {
+    const itemNames = targetItems.map(i => i.name + (i.price ? ` (${formatCurrency(i.price)})` : '')).join(', ');
+    noteInput.value = 'Einkauf: ' + itemNames;
+  }
+
+  modal.style.display = 'flex';
+  if (amtInput) amtInput.focus();
+  announceNVDA('Dialog zum Abbuchen des Einkaufs geöffnet.');
 }
 
-async function bookShoppingCartAsExpense() {
-  if (shoppingCart.length === 0) {
-    alert('Der Einkaufswagen ist leer.');
+function closeShoppingBookModal() {
+  const modal = document.getElementById('shopping-book-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function handleConfirmShoppingBooking(e) {
+  if (e) e.preventDefault();
+  ensureShoppingListInitialized();
+
+  const amtInput = document.getElementById('shopping-book-amount');
+  const accSel = document.getElementById('shopping-book-account');
+  const dateInput = document.getElementById('shopping-book-date');
+  const catSel = document.getElementById('shopping-book-category');
+  const subSel = document.getElementById('shopping-book-subcategory');
+  const noteInput = document.getElementById('shopping-book-note');
+  const clearDoneChk = document.getElementById('shopping-book-clear-done');
+
+  const amount = parseFloat(amtInput.value);
+  if (isNaN(amount) || amount <= 0) {
+    alert('Bitte gib einen gültigen Kassenbetrag größer als 0 € ein.');
     return;
   }
 
-  const total = shoppingCart.reduce((s, i) => s + i.price, 0);
-  const account = document.getElementById('shopping-book-account').value || 'bank';
-  const subcat = document.getElementById('shopping-book-subcat').value || 'Supermarkt';
-  const itemsSummary = shoppingCart.map(i => `${i.name} (${formatCurrency(i.price)})`).join(', ');
+  const accountId = accSel ? accSel.value : 'bank';
+  const txDate = dateInput && dateInput.value ? dateInput.value : new Date().toISOString().split('T')[0];
+  const category = catSel ? catSel.value : 'Lebensmittel, Supermarkt & Discounter';
+  const subcategory = subSel ? subSel.value : 'Supermarkt';
+  const note = noteInput ? noteInput.value.trim() : 'Einkauf';
 
-  const todayVal = new Date().toISOString().split('T')[0];
-
-  appState.transactions.push({
-    id: `tx_${Date.now()}`,
+  const newTx = {
+    id: 'tx_' + Date.now(),
     type: 'expense',
-    account: account,
-    amount: total,
-    category: 'Lebensmittel, Supermarkt & Discounter',
-    subcategory: subcat,
-    description: `Kassenzettel Einkauf: ${itemsSummary}`,
+    account: accountId,
+    amount: amount,
+    category: category,
+    subcategory: subcategory,
+    description: note,
     isPlanned: false,
-    date: todayVal
-  });
+    date: txDate
+  };
+
+  appState.transactions.push(newTx);
+
+  // If checkbox is checked, remove booked items
+  if (clearDoneChk && clearDoneChk.checked) {
+    const doneItems = appState.shoppingList.filter(i => i.checked);
+    if (doneItems.length > 0) {
+      appState.shoppingList = appState.shoppingList.filter(i => !i.checked);
+    } else {
+      // If none were checked, all were booked, so clear entire list
+      appState.shoppingList = [];
+    }
+  }
 
   await saveStateToEncryptedStorage();
-  shoppingCart = [];
-  renderShoppingCart();
-  updateOverview();
-  announceNVDA(`Einkauf über ${formatCurrency(total)} bei ${subcat} erfolgreich gebucht!`);
-  alert(`✅ Der Einkauf über ${formatCurrency(total)} (${subcat}) wurde erfolgreich als Ausgabe verbucht!`);
-}
-
-// ----------------------------------------------------------------------------
-// E. GLOBALE SUCHE & FILTER-ENGINE
-// ----------------------------------------------------------------------------
-let currentTxFilter = {
-  query: '',
-  status: 'all',
-  account: 'all'
-};
-
-function handleTxSearchFilterChange() {
-  const qInput = document.getElementById('tx-search-query');
-  const sSelect = document.getElementById('tx-filter-status');
-  const aSelect = document.getElementById('tx-filter-account');
-  const banner = document.getElementById('tx-search-results-banner');
-  const bannerText = document.getElementById('tx-search-results-text');
-  const clearBtn = document.getElementById('btn-clear-tx-search');
-
-  currentTxFilter.query = qInput ? qInput.value.trim().toLowerCase() : '';
-  currentTxFilter.status = sSelect ? sSelect.value : 'all';
-  currentTxFilter.account = aSelect ? aSelect.value : 'all';
-
-  if (clearBtn) clearBtn.style.display = currentTxFilter.query ? 'inline-block' : 'none';
-
+  closeShoppingBookModal();
+  renderShoppingList();
   updateOverview();
 
-  const isSearchActive = Boolean(currentTxFilter.query || currentTxFilter.status !== 'all' || currentTxFilter.account !== 'all');
-
-  const feedExp = document.getElementById('overview-expense-items-feed');
-  const countExp = feedExp ? feedExp.querySelectorAll('.tx-item, [role="listitem"]').length : 0;
-  const feedInc = document.getElementById('overview-income-items-feed');
-  const countInc = feedInc ? feedInc.querySelectorAll('.tx-item, [role="listitem"]').length : 0;
-  const feedTrf = document.getElementById('overview-transfer-items-feed');
-  const countTrf = feedTrf ? feedTrf.querySelectorAll('.tx-item, [role="listitem"]').length : 0;
-  const totalHits = countExp + countInc + countTrf;
-
-  const detExp = document.getElementById('details-expense-list');
-  const detInc = document.getElementById('details-income-list');
-  const detTrf = document.getElementById('details-transfer-list');
-
-  if (isSearchActive) {
-    if (detExp) detExp.open = countExp > 0;
-    if (detInc) detInc.open = countInc > 0;
-    if (detTrf) detTrf.open = countTrf > 0;
-
-    if (banner && bannerText) {
-      banner.style.display = 'flex';
-      if (totalHits > 0) {
-        bannerText.textContent = `🔍 ${totalHits} Treffer gefunden (${countExp} Ausgaben, ${countInc} Einnahmen, ${countTrf} Umbuchungen).`;
-      } else {
-        bannerText.textContent = `⚠️ Keine Buchungen gefunden für "${currentTxFilter.query || 'aktuelle Filter'}".`;
-      }
-    }
-
-    if (currentTxFilter.query && currentTxFilter.query.length >= 2) {
-      if (totalHits > 0) {
-        announceNVDA(`${totalHits} Buchungen für "${currentTxFilter.query}" gefunden (${countExp} Ausgaben, ${countInc} Einnahmen, ${countTrf} Umbuchungen). Listen geöffnet.`);
-      } else {
-        announceNVDA(`Keine Buchungen für "${currentTxFilter.query}" gefunden.`);
-      }
-    }
-  } else {
-    if (banner) banner.style.display = 'none';
-    if (detExp) detExp.open = false;
-    if (detInc) detInc.open = false;
-    if (detTrf) detTrf.open = false;
-  }
+  const accName = getAccountName(accountId);
+  announceNVDA(`Einkauf über ${formatCurrency(amount)} auf Konto ${accName} erfolgreich abgebucht!`);
+  alert(`✅ Der Einkauf über ${formatCurrency(amount)} (${subcategory}) wurde erfolgreich im Haushaltsbuch abgebucht!`);
 }
 
-function populateFilterAccountDropdown() {
-  ensureAccountsInitialized();
-  const sel = document.getElementById('tx-filter-account');
-  if (!sel) return;
-  const currentVal = sel.value || 'all';
-  sel.innerHTML = '<option value="all">Alle Konten</option>' + appState.accounts.map(a => `<option value="${escapeHTML(a.id)}">${escapeHTML(a.name)}</option>`).join('');
-  sel.value = currentVal;
-  applySymbolsToOptions(sel);
+// Backwards compatibility aliases
+function renderShoppingCart() {
+  renderShoppingList();
 }
-
-
-// ----------------------------------------------------------------------------
-// GLOBAL SORTING ENGINE FOR OVERVIEW TRANSACTIONS
-// ----------------------------------------------------------------------------
-let currentTxSortOrder = 'date-desc';
-
-function handleTxSortChange() {
-  const sel = document.getElementById('tx-sort-order');
-  if (sel) {
-    currentTxSortOrder = sel.value;
-    const sortLabels = {
-      'date-desc': 'Datum: Neueste zuerst (Neu bis Alt)',
-      'date-asc': 'Datum: Älteste zuerst (Alt bis Neu)',
-      'alpha-asc': 'Alphabetisch: A bis Z',
-      'alpha-desc': 'Alphabetisch: Z bis A',
-      'amount-desc': 'Betrag: Höchste zuerst (Groß bis Klein)',
-      'amount-asc': 'Betrag: Niedrigste zuerst (Klein bis Groß)',
-      'category-asc': 'Kategorie: Alphabetisch (A bis Z)'
-    };
-    announceNVDA(`Sortierung geändert auf: ${sortLabels[currentTxSortOrder] || currentTxSortOrder}`);
-  }
-  updateOverview();
+function runPurchaseSimulation() {
+  // Deprecated simulator no-op
 }
-
-function applyTxSorting(list) {
-  return [...list].sort((a, b) => {
-    switch (currentTxSortOrder) {
-      case 'date-asc':
-        return a.date.localeCompare(b.date);
-      case 'alpha-asc': {
-        const nameA = a.description || a.subcategory || a.category || '';
-        const nameB = b.description || b.subcategory || b.category || '';
-        return nameA.localeCompare(nameB, 'de', { sensitivity: 'base' });
-      }
-      case 'alpha-desc': {
-        const nameA = a.description || a.subcategory || a.category || '';
-        const nameB = b.description || b.subcategory || b.category || '';
-        return nameB.localeCompare(nameA, 'de', { sensitivity: 'base' });
-      }
-      case 'amount-desc':
-        return Number(b.amount || 0) - Number(a.amount || 0);
-      case 'amount-asc':
-        return Number(a.amount || 0) - Number(b.amount || 0);
-      case 'category-asc': {
-        const catA = a.category || '';
-        const catB = b.category || '';
-        return catA.localeCompare(catB, 'de', { sensitivity: 'base' });
-      }
-      case 'date-desc':
-      default:
-        return b.date.localeCompare(a.date);
-    }
-  });
+function saveSimulatedPurchase() {
+  // Deprecated simulator no-op
+}
+function clearShoppingCart() {
+  clearEntireShoppingList();
+}
+function handleAddShoppingItem(e) {
+  addShoppingItemFromForm(e);
+}
+function bookShoppingCartAsExpense() {
+  openShoppingBookModal();
 }
 
 // ----------------------------------------------------------------------------
@@ -1407,393 +1971,6 @@ async function handleDeleteWish(wishId) {
   announceNVDA(`Wunsch "${wish.title}" gelöscht.`);
 }
 
-function applyTxFilters(list) {
-  const todayStr = new Date().toISOString().split('T')[0];
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = yesterday.toISOString().split('T')[0];
-
-  const monthNamesDe = ['januar', 'februar', 'maerz', 'april', 'mai', 'juni', 'juli', 'august', 'september', 'oktober', 'november', 'dezember'];
-  const monthNamesRaw = ['januar', 'februar', 'märz', 'april', 'mai', 'juni', 'juli', 'august', 'september', 'oktober', 'november', 'dezember'];
-  const weekdayNames = ['sonntag', 'montag', 'dienstag', 'mittwoch', 'donnerstag', 'freitag', 'samstag'];
-
-  return list.filter(tx => {
-    // 1. Super-Suche Engine
-    if (currentTxFilter.query) {
-      const rawQuery = currentTxFilter.query.trim().toLowerCase();
-      const qTokens = rawQuery.split(/\s+/).filter(Boolean);
-
-      const acc = appState.accounts ? appState.accounts.find(a => a.id === tx.account) : null;
-      const accName = acc ? acc.name : (tx.account || '');
-      const fromAcc = appState.accounts ? appState.accounts.find(a => a.id === tx.fromAccount) : null;
-      const fromAccName = fromAcc ? fromAcc.name : (tx.fromAccount || '');
-      const toAcc = appState.accounts ? appState.accounts.find(a => a.id === tx.toAccount) : null;
-      const toAccName = toAcc ? toAcc.name : (tx.toAccount || '');
-      const txAmt = Number(tx.amount || 0);
-      const amtStr = txAmt.toFixed(2);
-      const amtGerman = amtStr.replace('.', ',');
-      const amtNoDec = Math.round(txAmt).toString();
-
-      // Date information
-      let dateWords = [];
-      if (tx.date) {
-        dateWords.push(tx.date);
-        const [y, m, d] = tx.date.split('-');
-        if (y && m && d) {
-          const mIdx = parseInt(m, 10) - 1;
-          if (mIdx >= 0 && mIdx < 12) {
-            dateWords.push(monthNamesDe[mIdx], monthNamesRaw[mIdx]);
-            dateWords.push(monthNamesRaw[mIdx].substring(0, 3), monthNamesDe[mIdx].substring(0, 3));
-          }
-          const dtObj = new Date(tx.date + 'T12:00:00');
-          if (!isNaN(dtObj.getTime())) {
-            dateWords.push(weekdayNames[dtObj.getDay()]);
-          }
-          dateWords.push(`${d}.${m}.${y}`, `${d}.${m}.`, `${d}.`);
-        }
-        if (tx.date === todayStr) dateWords.push('heute');
-        if (tx.date === yesterdayStr) dateWords.push('gestern');
-      }
-
-      // Types & Tags
-      let typeWords = [];
-      if (tx.type === 'income') typeWords.push('einnahme', 'geld plus', 'einnahmen', 'habenseite');
-      else if (tx.type === 'transfer') typeWords.push('umbuchung', 'transfer', 'sparen', 'verschieben', 'sparplan');
-      else typeWords.push('ausgabe', 'ausgaben', 'minus', 'kosten');
-
-      if (tx.isRecurring) typeWords.push('wiederkehrend', 'dauerauftrag', 'abo', 'fixkosten', 'vertrag', 'sparplan');
-      else typeWords.push('einmalig', 'variabel');
-
-      if (tx.isInstallment || (tx.description && (tx.description.includes('Rate') || tx.description.includes('Kredit')))) {
-        typeWords.push('kredit', 'rate', 'ratenkauf', 'ratenzahlung', 'finanzierung', 'darlehen', 'schuld');
-      }
-
-      const rawComp = [
-        tx.description || '',
-        tx.category || '',
-        tx.subcategory || '',
-        accName,
-        tx.account || '',
-        fromAccName,
-        tx.fromAccount || '',
-        toAccName,
-        tx.toAccount || '',
-        ...dateWords,
-        ...typeWords,
-        amtStr,
-        amtGerman,
-        amtNoDec,
-        `${amtGerman} €`,
-        `${amtGerman}€`,
-        `${amtNoDec} €`,
-        `${amtNoDec}€`
-      ].join(' ').toLowerCase();
-
-      const normComp = normalizeSearchText(rawComp);
-      const compWords = normComp.split(/\s+/).filter(Boolean);
-
-      // Check each token
-      for (let token of qTokens) {
-        // Strip trailing currency symbols
-        token = token.replace(/€|euro/g, '').trim();
-        if (!token) continue;
-
-        // A. Negation: -token (e.g. -rewe, -paypal)
-        if (token.startsWith('-') && token.length > 1) {
-          const negToken = token.slice(1);
-          if (matchesFuzzyOrExact(negToken, compWords, rawComp, normComp)) {
-            return false;
-          }
-          continue;
-        }
-
-        // B. Range match: 10-50 or 10..50
-        const rangeMatch = token.match(/^(\d+(?:[.,]\d+)?)(?:-|\.\.)(\d+(?:[.,]\d+)?)$/);
-        if (rangeMatch) {
-          const minVal = parseFloat(rangeMatch[1].replace(',', '.'));
-          const maxVal = parseFloat(rangeMatch[2].replace(',', '.'));
-          if (!isNaN(minVal) && !isNaN(maxVal)) {
-            if (!(txAmt >= minVal && txAmt <= maxVal)) return false;
-            continue;
-          }
-        }
-
-        // C. Approximate amount: ~50
-        if (token.startsWith('~') && token.length > 1) {
-          const approxTarget = parseFloat(token.slice(1).replace(',', '.'));
-          if (!isNaN(approxTarget)) {
-            const margin = Math.max(2, approxTarget * 0.1);
-            if (Math.abs(txAmt - approxTarget) > margin) return false;
-            continue;
-          }
-        }
-
-        // D. Greater / Lesser comparison operators: >50, <100, >=20, <=80
-        if (token.startsWith('>') || token.startsWith('<')) {
-          const isGte = token.startsWith('>=');
-          const isLte = token.startsWith('<=');
-          const isGt = !isGte && token.startsWith('>');
-          const isLt = !isLte && token.startsWith('<');
-          const numStr = token.replace(/^[><]=?/, '').replace(',', '.');
-          const threshold = parseFloat(numStr);
-          if (!isNaN(threshold)) {
-            if (isGt && !(txAmt > threshold)) return false;
-            if (isLt && !(txAmt < threshold)) return false;
-            if (isGte && !(txAmt >= threshold)) return false;
-            if (isLte && !(txAmt <= threshold)) return false;
-            continue;
-          }
-        }
-
-        // E. Fuzzy, phonetic & exact token matching
-        if (!matchesFuzzyOrExact(token, compWords, rawComp, normComp)) {
-          return false;
-        }
-      }
-    }
-
-    // 2. Status
-    if (currentTxFilter.status === 'booked') {
-      if (tx.isPlanned || tx.date > todayStr) return false;
-    } else if (currentTxFilter.status === 'planned') {
-      if (!tx.isPlanned && tx.date <= todayStr) return false;
-    } else if (currentTxFilter.status === 'recurring') {
-      if (!tx.isRecurring) return false;
-    }
-
-    // 3. Account
-    if (currentTxFilter.account && currentTxFilter.account !== 'all') {
-      if (tx.account !== currentTxFilter.account && tx.fromAccount !== currentTxFilter.account && tx.toAccount !== currentTxFilter.account) {
-        return false;
-      }
-    }
-
-    return true;
-  });
-}
-
-// ----------------------------------------------------------------------------
-// F. BANK-KONTOAUSZUG / CSV-IMPORT ENGINE
-// ----------------------------------------------------------------------------
-let parsedCsvTransactions = [];
-
-function handleBankCsvUpload(e) {
-  const file = e.target.files[0];
-  if (!file) return;
-
-  const reader = new FileReader();
-  reader.onload = function(evt) {
-    const text = evt.target.result;
-    parseAndPreviewBankCsv(text);
-  };
-  reader.readAsText(file, 'utf-8');
-  e.target.value = '';
-}
-
-function parseCurrencyString(val) {
-  if (!val) return NaN;
-  let s = val.replace(/€|EUR|\s/g, '').trim();
-  if (s.includes('.') && s.includes(',')) {
-    s = s.replace(/\./g, '').replace(',', '.');
-  } else if (s.includes(',')) {
-    s = s.replace(',', '.');
-  }
-  return parseFloat(s);
-}
-
-function parseAndPreviewBankCsv(csvText) {
-  parsedCsvTransactions = [];
-  const lines = csvText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
-  if (lines.length < 2) {
-    alert('Die CSV-Datei enthält keine Buchungszeilen.');
-    return;
-  }
-
-  const firstLine = lines[0];
-  let sep = ';';
-  if ((firstLine.match(/;/g) || []).length < (firstLine.match(/,/g) || []).length) sep = ',';
-  if ((firstLine.match(/\t/g) || []).length > (firstLine.match(new RegExp(sep, 'g')) || []).length) sep = '\t';
-
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(sep).map(c => c.replace(/^["']|["']$/g, '').trim());
-    if (cols.length < 3) continue;
-
-    let dateStr = null;
-    let amountVal = null;
-    let payeeOrMemo = '';
-
-    for (let c = 0; c < cols.length; c++) {
-      const val = cols[c];
-      if (!val) continue;
-
-      // 1. Date matching (YYYY-MM-DD or DD.MM.YYYY)
-      if (/^\d{4}-\d{2}-\d{2}$/.test(val)) {
-        if (!dateStr) dateStr = val;
-        continue;
-      } else if (/^\d{2}\.\d{2}\.\d{4}$/.test(val)) {
-        if (!dateStr) {
-          const parts = val.split('.');
-          dateStr = `${parts[2]}-${parts[1]}-${parts[0]}`;
-        }
-        continue;
-      }
-
-      // 2. Amount matching (must not contain hyphens in date format or text)
-      const cleanNumStr = val.replace(/€|EUR|\s/g, '').replace(/\./g, '').replace(',', '.');
-      if (amountVal === null && /^-?\d+(\.\d+)?$/.test(cleanNumStr) && !val.includes(':')) {
-        const parsed = parseCurrencyString(val);
-        if (!isNaN(parsed) && parsed !== 0) {
-          amountVal = parsed;
-          continue;
-        }
-      }
-
-      // 3. Memo / Payee
-      if (val.length > 2 && isNaN(val)) {
-        payeeOrMemo += (payeeOrMemo ? ' ' : '') + val;
-      }
-    }
-
-    if (dateStr && amountVal !== null && !isNaN(amountVal) && amountVal !== 0) {
-      const isIncome = amountVal > 0;
-      const absAmount = Math.abs(amountVal);
-      const matchedCat = autoMatchCategoryForPayee(payeeOrMemo, isIncome ? 'inc' : 'exp');
-
-      parsedCsvTransactions.push({
-        selected: true,
-        date: dateStr,
-        amount: absAmount,
-        type: isIncome ? 'income' : 'expense',
-        category: matchedCat.main,
-        subcategory: matchedCat.sub,
-        description: payeeOrMemo || (isIncome ? 'Bank-Gutschrift' : 'Bank-Lastschrift / Kartenzahlung'),
-        account: appState.accounts[0] ? appState.accounts[0].id : 'bank'
-      });
-    }
-  }
-
-  if (parsedCsvTransactions.length === 0) {
-    alert('Es konnten keine gültigen Buchungszeilen in der CSV-Datei erkannt werden.');
-    return;
-  }
-
-  openCsvPreviewModal();
-}
-
-function autoMatchCategoryForPayee(text, type) {
-  const lower = (text || '').toLowerCase();
-  const db = CATEGORIES_DB[type] || CATEGORIES_DB['exp'];
-
-  for (const [mainCat, subs] of Object.entries(db)) {
-    for (const sub of subs) {
-      if (lower.includes(sub.toLowerCase())) {
-        return { main: mainCat, sub: sub };
-      }
-    }
-  }
-
-  if (type === 'exp') {
-    if (lower.includes('rewe') || lower.includes('aldi') || lower.includes('lidl') || lower.includes('edeka') || lower.includes('kaufland') || lower.includes('netto') || lower.includes('penny')) {
-      return { main: 'Lebensmittel, Supermarkt & Discounter', sub: 'Supermarkt' };
-    }
-    if (lower.includes('miete') || lower.includes('wohnen') || lower.includes('stadtwerke') || lower.includes('strom')) {
-      return { main: 'Miete, Wohnen & Nebenkosten', sub: 'Miete' };
-    }
-    if (lower.includes('amazon') || lower.includes('paypal') || lower.includes('ebay') || lower.includes('otto') || lower.includes('zalando')) {
-      return { main: 'Shopping, Online-Kauf & Marktplätze', sub: 'Online-Kauf' };
-    }
-    if (lower.includes('tanken') || lower.includes('aral') || lower.includes('shell') || lower.includes('total') || lower.includes('esso')) {
-      return { main: 'Mobilität, Auto & Kraftfahrzeuge', sub: 'Tanken' };
-    }
-    return { main: 'Sonstige Ausgaben & Bargeld', sub: 'Kartenzahlung' };
-  } else {
-    if (lower.includes('gehalt') || lower.includes('lohn') || lower.includes('bezüge') || lower.includes('arbeitgeber')) {
-      return { main: 'Gehalt, Lohn & Beruf', sub: 'Gehalt' };
-    }
-    if (lower.includes('kindergeld') || lower.includes('rente') || lower.includes('blindengeld') || lower.includes('amt') || lower.includes('kasse')) {
-      return { main: 'Staatliche Leistungen, Hilfen & Zuschüsse', sub: 'Leistungen' };
-    }
-    return { main: 'Sonstige Einnahmen', sub: 'Gutschrift' };
-  }
-}
-
-function openCsvPreviewModal() {
-  const modal = document.getElementById('csv-preview-modal');
-  const container = document.getElementById('csv-preview-table-container');
-  if (!container || !modal) return;
-
-  container.innerHTML = `
-    <table class="shopping-table" aria-label="CSV Vorschautabelle">
-      <thead>
-        <tr>
-          <th style="width: 40px; text-align: center;">✓</th>
-          <th>Datum</th>
-          <th>Art</th>
-          <th>Betrag</th>
-          <th>Hauptkategorie</th>
-          <th>Beschreibung</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${parsedCsvTransactions.map((tx, idx) => `
-          <tr>
-            <td style="text-align: center;">
-              <input type="checkbox" id="csv-chk-${idx}" ${tx.selected ? 'checked' : ''} onchange="parsedCsvTransactions[${idx}].selected = this.checked" style="width: 18px; height: 18px;">
-            </td>
-            <td>${escapeHTML(tx.date)}</td>
-            <td style="font-weight: bold; color: ${tx.type === 'income' ? '#4CAF50' : '#F44336'};">${tx.type === 'income' ? '🟢 Einnahme' : '🔴 Ausgabe'}</td>
-            <td style="font-weight: bold;">${formatCurrency(tx.amount)}</td>
-            <td>
-              <select class="large-select" style="padding: 4px 8px; font-size: 13px;" onchange="parsedCsvTransactions[${idx}].category = this.value">
-                ${Object.keys(CATEGORIES_DB[tx.type === 'income' ? 'inc' : 'exp']).map(c => `<option value="${escapeHTML(c)}" ${c === tx.category ? 'selected' : ''}>${escapeHTML(c)}</option>`).join('')}
-              </select>
-            </td>
-            <td><input type="text" class="large-input" value="${escapeHTML(tx.description)}" onchange="parsedCsvTransactions[${idx}].description = this.value" style="padding: 4px 8px; font-size: 13px;"></td>
-          </tr>
-        `).join('')}
-      </tbody>
-    </table>
-  `;
-
-  modal.style.display = 'flex';
-  announceNVDA(`CSV-Vorschau geöffnet. ${parsedCsvTransactions.length} Buchungen erkannt.`);
-}
-
-function closeCsvPreviewModal() {
-  const modal = document.getElementById('csv-preview-modal');
-  if (modal) modal.style.display = 'none';
-}
-
-async function confirmCsvImport() {
-  const toImport = parsedCsvTransactions.filter(t => t.selected);
-  if (toImport.length === 0) {
-    alert('Bitte wähle mindestens eine Buchung zum Importieren aus.');
-    return;
-  }
-
-  const todayStr = new Date().toISOString().split('T')[0];
-
-  toImport.forEach(tx => {
-    appState.transactions.push({
-      id: `tx_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-      type: tx.type,
-      account: tx.account,
-      amount: tx.amount,
-      category: tx.category,
-      subcategory: tx.subcategory || 'CSV-Import',
-      description: tx.description,
-      isPlanned: tx.date > todayStr,
-      date: tx.date
-    });
-  });
-
-  await saveStateToEncryptedStorage();
-  closeCsvPreviewModal();
-  updateOverview();
-  announceNVDA(`${toImport.length} Buchungen erfolgreich importiert!`);
-  alert(`✅ Erfolgreich ${toImport.length} Buchungen aus dem Bank-Kontoauszug importiert!`);
-}
-
 // ----------------------------------------------------------------------------
 // G. DRUCKBARER MONATSBERICHT & BEHÖRDEN-NACHWEIS (PDF-EXPORT)
 // ----------------------------------------------------------------------------
@@ -1927,36 +2104,77 @@ function renderAccountsViewList() {
   if (!container) return;
 
   const show = isSymbolsEnabled();
+  const todayStr = new Date().toISOString().split('T')[0];
+  const currentBalances = calculateBalancesUpToDate(todayStr);
 
   container.innerHTML = appState.accounts.map(acc => {
     const icon = acc.icon || ACCOUNT_TYPE_ICONS[acc.type] || '💳';
     const typeLabel = ACCOUNT_TYPE_NAMES[acc.type] || acc.type;
-    const balanceStr = formatCurrency(acc.initialBalance || 0);
+    const curBal = currentBalances[acc.id] !== undefined ? currentBalances[acc.id] : (acc.initialBalance || 0);
+    const curBalStr = formatCurrency(curBal);
+    const initBalStr = formatCurrency(acc.initialBalance || 0);
 
     const iconHtml = show ? `<span class="emoji-icon" aria-hidden="true" style="font-size: 26px;">${icon}</span>` : '';
     const editBtnText = show ? '✏️ Bearbeiten' : 'Bearbeiten';
     const delBtnText = show ? '🗑️ Löschen' : 'Löschen';
+    const isCash = (acc.type === 'cash' || acc.id === 'cash');
+
+    let backupBadge = '';
+    if (acc.hasBackupAccount && acc.backupAccountId) {
+      const backupAcc = appState.accounts.find(a => a.id === acc.backupAccountId);
+      const backupName = backupAcc ? backupAcc.name : acc.backupAccountId;
+      backupBadge = `<span style="display: inline-flex; align-items: center; gap: 4px; background: rgba(0, 112, 186, 0.1); color: #0070BA; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; margin-right: 6px;">🛡️ Auto-Deckung: ${escapeHTML(backupName)}</span>`;
+    }
+
+    let dispoBadge = '';
+    if (acc.dispoLimit && Number(acc.dispoLimit) > 0) {
+      dispoBadge = `<span style="display: inline-flex; align-items: center; gap: 4px; background: rgba(156, 39, 176, 0.1); color: #9C27B0; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; margin-right: 6px;">💳 Dispo: ${formatCurrency(acc.dispoLimit)}</span>`;
+    }
+
+    const hasBankDetails = !!(acc.bankName || acc.owner || acc.iban || acc.bic || acc.accountNumber || acc.notes);
+    let bankDetailsHtml = '';
+    if (hasBankDetails) {
+      bankDetailsHtml = `
+        <details style="margin-top: 10px; width: 100%; font-size: 13px; color: var(--text-secondary);">
+          <summary style="cursor: pointer; font-weight: 600; color: #1976D2; padding: 2px 0;">ℹ️ Bankverbindung &amp; Details anzeigen</summary>
+          <div style="background: rgba(0,0,0,0.02); border: 1px solid var(--border-color, #e0e0e0); border-radius: 6px; padding: 10px 14px; margin-top: 6px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px;">
+            ${acc.bankName ? `<div><strong>Bank:</strong> ${escapeHTML(acc.bankName)}</div>` : ''}
+            ${acc.owner ? `<div><strong>Inhaber:</strong> ${escapeHTML(acc.owner)}</div>` : ''}
+            ${acc.iban ? `<div><strong>IBAN:</strong> <span style="font-family: monospace; font-size: 14px;">${escapeHTML(acc.iban)}</span></div>` : ''}
+            ${acc.bic ? `<div><strong>BIC:</strong> <span style="font-family: monospace;">${escapeHTML(acc.bic)}</span></div>` : ''}
+            ${acc.accountNumber ? `<div><strong>Konto/Kdnr:</strong> ${escapeHTML(acc.accountNumber)}</div>` : ''}
+            ${acc.notes ? `<div style="grid-column: 1 / -1;"><strong>Notizen:</strong> ${escapeHTML(acc.notes)}</div>` : ''}
+          </div>
+        </details>
+      `;
+    }
 
     return `
-      <div class="settings-account-item" style="display: flex; align-items: center; justify-content: space-between; background: var(--card-bg, #ffffff); border: 2px solid var(--border-color, #e0e0e0); border-radius: 8px; padding: 14px 18px; gap: 12px; flex-wrap: wrap;">
-        <div style="display: flex; align-items: center; gap: 14px; flex: 1; min-width: 220px;">
-          ${iconHtml}
-          <div>
-            <div style="font-size: 18px; font-weight: bold; color: var(--text-primary);">${escapeHTML(acc.name)}</div>
-            <div style="font-size: 14px; color: var(--text-secondary); margin-top: 2px;">
-              ${escapeHTML(typeLabel)} | Startguthaben: <strong style="color: var(--text-primary);">${balanceStr}</strong>
+      <div class="settings-account-item" style="display: flex; flex-direction: column; background: var(--card-bg, #ffffff); border: 2px solid var(--border-color, #e0e0e0); border-radius: 8px; padding: 14px 18px; gap: 10px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+          <div style="display: flex; align-items: center; gap: 14px; flex: 1; min-width: 220px;">
+            ${iconHtml}
+            <div>
+              <div style="font-size: 18px; font-weight: bold; color: var(--text-primary);">${escapeHTML(acc.name)}</div>
+              <div style="font-size: 14px; color: var(--text-secondary); margin-top: 2px;">
+                ${escapeHTML(typeLabel)} | Kontostand aktuell: <strong style="color: ${curBal >= 0 ? '#2E7D32' : '#C62828'}; font-size: 15px;">${curBalStr}</strong> <span style="font-size: 12px; color: var(--text-muted, #777);">(Start: ${initBalStr})</span>
+              </div>
+              <div style="margin-top: 4px;">
+                ${backupBadge}${dispoBadge}
+              </div>
+              ${acc.hint ? `<div style="font-size: 13px; color: var(--text-muted, #777); margin-top: 3px;">${escapeHTML(acc.hint)}</div>` : ''}
             </div>
-            ${acc.hint ? `<div style="font-size: 13px; color: var(--text-muted, #777); margin-top: 2px;">${escapeHTML(acc.hint)}</div>` : ''}
+          </div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button type="button" class="btn btn-secondary" onclick="openAccountModal('${acc.id}')" title="Konto bearbeiten" aria-label="Konto ${escapeHTML(acc.name)} bearbeiten" style="padding: 8px 14px;">
+              ${editBtnText}
+            </button>
+            <button type="button" class="btn btn-secondary" onclick="deleteAccount('${acc.id}')" title="Konto löschen" aria-label="Konto ${escapeHTML(acc.name)} löschen" style="padding: 8px 14px; color: #f44336; border-color: rgba(244, 67, 54, 0.4);">
+              ${delBtnText}
+            </button>
           </div>
         </div>
-        <div style="display: flex; gap: 10px;">
-          <button type="button" class="btn btn-secondary" onclick="openAccountModal('${acc.id}')" title="Konto bearbeiten" aria-label="Konto ${escapeHTML(acc.name)} bearbeiten" style="padding: 8px 16px;">
-            ${editBtnText}
-          </button>
-          <button type="button" class="btn btn-secondary" onclick="deleteAccount('${acc.id}')" title="Konto löschen" aria-label="Konto ${escapeHTML(acc.name)} löschen" style="padding: 8px 16px; color: #f44336; border-color: rgba(244, 67, 54, 0.4);">
-            ${delBtnText}
-          </button>
-        </div>
+        ${bankDetailsHtml}
       </div>
     `;
   }).join('');
@@ -2050,7 +2268,7 @@ const ACCOUNT_TYPE_NAMES = {
 
 const DEFAULT_ACCOUNTS = [
   { id: 'bank', name: 'Bankkonto / Girokonto', type: 'bank', icon: '🏦', hint: 'Miete, EC-Karte, Gehalt, Daueraufträge', initialBalance: 0 },
-  { id: 'paypal', name: 'PayPal Guthaben', type: 'paypal', icon: '🅿', hint: 'Online-Shopping, Freunde, Abos', initialBalance: 0 },
+  { id: 'paypal', name: 'PayPal Guthaben', type: 'paypal', icon: '🅿', hint: 'Online-Shopping, Freunde, Abos', initialBalance: 0, hasBackupAccount: true, backupAccountId: 'bank' },
   { id: 'savings', name: 'Tagesgeldkonto', type: 'savings', icon: '📈', hint: 'Notgroschen, Rücklagen, Urlaub', initialBalance: 0 },
   { id: 'cash', name: 'Bargeld', type: 'cash', icon: '💵', hint: 'Bäcker, Barbezahlung, Portemonnaie', initialBalance: 0 }
 ];
@@ -2098,6 +2316,26 @@ function getAccountIcon(accKey) {
   return ACCOUNT_TYPE_ICONS[accKey] || '💳';
 }
 
+function populateFilterAccountDropdown() {
+  ensureAccountsInitialized();
+  const sel = document.getElementById('tx-filter-account');
+  if (!sel) return;
+
+  const currentVal = sel.value || 'all';
+  let html = '<option value="all">Alle Konten</option>';
+  (appState.accounts || []).forEach(acc => {
+    const icon = acc.icon || ACCOUNT_TYPE_ICONS[acc.type] || '💳';
+    html += `<option value="${escapeHTML(acc.id)}" data-emoji="${icon}">${escapeHTML(acc.name)}</option>`;
+  });
+  sel.innerHTML = html;
+  if (currentVal && (currentVal === 'all' || (appState.accounts || []).some(a => a.id === currentVal))) {
+    sel.value = currentVal;
+  } else {
+    sel.value = 'all';
+  }
+  applySymbolsToOptions(sel);
+}
+
 function populateAllAccountDropdowns() {
   ensureAccountsInitialized();
   
@@ -2134,6 +2372,16 @@ function populateAllAccountDropdowns() {
 
     applySymbolsToOptions(sel);
   });
+
+  const expSplitToggle = document.getElementById('exp-split-toggle');
+  if (expSplitToggle && expSplitToggle.checked && typeof renderExpenseSplitRows === 'function') {
+    renderExpenseSplitRows();
+  }
+  const incSplitToggle = document.getElementById('inc-split-toggle');
+  if (incSplitToggle && incSplitToggle.checked && typeof renderIncomeSplitRows === 'function') {
+    renderIncomeSplitRows();
+  }
+  populateFilterAccountDropdown();
 }
 
 function renderSettingsAccountsList() {
@@ -2175,6 +2423,63 @@ function renderSettingsAccountsList() {
   }).join('');
 }
 
+function formatIbanInput(input) {
+  if (!input) return;
+  let val = input.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (val.length > 34) val = val.substring(0, 34);
+  const parts = [];
+  for (let i = 0; i < val.length; i += 4) {
+    parts.push(val.substring(i, i + 4));
+  }
+  input.value = parts.join(' ');
+}
+
+function toggleAccountBackupSection() {
+  const toggle = document.getElementById('account-modal-backup-toggle');
+  const section = document.getElementById('account-modal-backup-section');
+  if (section && toggle) {
+    section.style.display = toggle.checked ? 'block' : 'none';
+  }
+}
+
+function toggleAccountDetailsSection() {
+  const toggle = document.getElementById('account-modal-details-toggle');
+  const section = document.getElementById('account-modal-details-section');
+  if (section && toggle) {
+    section.style.display = toggle.checked ? 'block' : 'none';
+  }
+}
+
+function syncInitialBalanceToCurrent() {
+  const idInput = document.getElementById('account-modal-id');
+  const balInput = document.getElementById('account-modal-balance');
+  if (!idInput || !idInput.value || !balInput) return;
+  const accId = idInput.value;
+  const todayStr = new Date().toISOString().split('T')[0];
+  const balances = calculateBalancesUpToDate(todayStr);
+  const curBal = balances[accId] !== undefined ? balances[accId] : 0;
+  balInput.value = curBal.toFixed(2);
+  announceNVDA(`Startguthaben auf aktuellen Saldo von ${formatCurrency(curBal)} gesetzt.`);
+}
+
+function populateAccountBackupDropdown(excludeAccId, selectedVal) {
+  const sel = document.getElementById('account-modal-backup-account');
+  if (!sel) return;
+  sel.innerHTML = '';
+  const otherAccs = (appState.accounts || []).filter(a => a.id !== excludeAccId);
+  otherAccs.forEach(acc => {
+    const opt = document.createElement('option');
+    opt.value = acc.id;
+    opt.textContent = `${acc.name} (${ACCOUNT_TYPE_NAMES[acc.type] || acc.type})`;
+    if (selectedVal && selectedVal === acc.id) {
+      opt.selected = true;
+    } else if (!selectedVal && acc.type === 'bank') {
+      opt.selected = true;
+    }
+    sel.appendChild(opt);
+  });
+}
+
 function openAccountModal(accId) {
   ensureAccountsInitialized();
   const modal = document.getElementById('account-modal');
@@ -2184,6 +2489,20 @@ function openAccountModal(accId) {
   const typeInput = document.getElementById('account-modal-type');
   const balInput = document.getElementById('account-modal-balance');
   const hintInput = document.getElementById('account-modal-hint');
+  const curBalBox = document.getElementById('account-modal-current-balance-box');
+  const curBalVal = document.getElementById('account-modal-current-balance-val');
+
+  const backupToggle = document.getElementById('account-modal-backup-toggle');
+  const detailsToggle = document.getElementById('account-modal-details-toggle');
+  const bankInput = document.getElementById('account-modal-bank');
+  const ownerInput = document.getElementById('account-modal-owner');
+  const ibanInput = document.getElementById('account-modal-iban');
+  const bicInput = document.getElementById('account-modal-bic');
+  const numberInput = document.getElementById('account-modal-number');
+  const dispoInput = document.getElementById('account-modal-dispo');
+  const notesInput = document.getElementById('account-modal-notes');
+
+  populateAccountBackupDropdown(accId || '', '');
 
   if (accId) {
     const acc = appState.accounts.find(a => a.id === accId);
@@ -2194,6 +2513,33 @@ function openAccountModal(accId) {
     typeInput.value = acc.type || 'bank';
     balInput.value = (acc.initialBalance !== undefined) ? acc.initialBalance : 0;
     hintInput.value = acc.hint || '';
+
+    // Aktuellen berechneten Saldo anzeigen
+    if (curBalBox && curBalVal) {
+      curBalBox.style.display = 'block';
+      const todayStr = new Date().toISOString().split('T')[0];
+      const balances = calculateBalancesUpToDate(todayStr);
+      const curBal = balances[acc.id] !== undefined ? balances[acc.id] : (acc.initialBalance || 0);
+      curBalVal.textContent = formatCurrency(curBal);
+    }
+
+    // Auto-Deckung
+    const hasBackup = !!acc.hasBackupAccount;
+    if (backupToggle) backupToggle.checked = hasBackup;
+    populateAccountBackupDropdown(acc.id, acc.backupAccountId || '');
+    toggleAccountBackupSection();
+
+    // Bankdetails
+    const hasDetails = !!(acc.bankName || acc.owner || acc.iban || acc.bic || acc.accountNumber || acc.dispoLimit || acc.notes);
+    if (detailsToggle) detailsToggle.checked = hasDetails;
+    if (bankInput) bankInput.value = acc.bankName || '';
+    if (ownerInput) ownerInput.value = acc.owner || '';
+    if (ibanInput) ibanInput.value = acc.iban || '';
+    if (bicInput) bicInput.value = acc.bic || '';
+    if (numberInput) numberInput.value = acc.accountNumber || '';
+    if (dispoInput) dispoInput.value = (acc.dispoLimit !== undefined && acc.dispoLimit !== null && acc.dispoLimit !== '') ? acc.dispoLimit : '';
+    if (notesInput) notesInput.value = acc.notes || '';
+    toggleAccountDetailsSection();
   } else {
     heading.textContent = 'Neues Konto hinzufügen';
     idInput.value = '';
@@ -2201,6 +2547,20 @@ function openAccountModal(accId) {
     typeInput.value = 'bank';
     balInput.value = '0.00';
     hintInput.value = '';
+    if (curBalBox) curBalBox.style.display = 'none';
+
+    if (backupToggle) backupToggle.checked = false;
+    toggleAccountBackupSection();
+
+    if (detailsToggle) detailsToggle.checked = false;
+    if (bankInput) bankInput.value = '';
+    if (ownerInput) ownerInput.value = '';
+    if (ibanInput) ibanInput.value = '';
+    if (bicInput) bicInput.value = '';
+    if (numberInput) numberInput.value = '';
+    if (dispoInput) dispoInput.value = '';
+    if (notesInput) notesInput.value = '';
+    toggleAccountDetailsSection();
   }
 
   if (modal) modal.style.display = 'flex';
@@ -2232,6 +2592,21 @@ async function saveAccount(e) {
   const hint = document.getElementById('account-modal-hint').value.trim();
   const icon = ACCOUNT_TYPE_ICONS[type] || '💳';
 
+  const backupToggle = document.getElementById('account-modal-backup-toggle');
+  const backupAccountSelect = document.getElementById('account-modal-backup-account');
+  const hasBackup = backupToggle ? backupToggle.checked : false;
+  const backupAccountId = (hasBackup && backupAccountSelect) ? backupAccountSelect.value : '';
+
+  const detailsToggle = document.getElementById('account-modal-details-toggle');
+  const hasDetails = detailsToggle ? detailsToggle.checked : false;
+  const bankName = hasDetails ? (document.getElementById('account-modal-bank')?.value.trim() || '') : '';
+  const owner = hasDetails ? (document.getElementById('account-modal-owner')?.value.trim() || '') : '';
+  const iban = hasDetails ? (document.getElementById('account-modal-iban')?.value.trim() || '') : '';
+  const bic = hasDetails ? (document.getElementById('account-modal-bic')?.value.trim() || '') : '';
+  const accountNumber = hasDetails ? (document.getElementById('account-modal-number')?.value.trim() || '') : '';
+  const dispoLimit = hasDetails ? (parseFloat(document.getElementById('account-modal-dispo')?.value) || 0) : 0;
+  const notes = hasDetails ? (document.getElementById('account-modal-notes')?.value.trim() || '') : '';
+
   if (!name) {
     alert('Bitte gib einen Namen für das Konto ein.');
     return;
@@ -2246,6 +2621,15 @@ async function saveAccount(e) {
       acc.icon = icon;
       acc.hint = hint;
       acc.initialBalance = balance;
+      acc.hasBackupAccount = hasBackup;
+      acc.backupAccountId = backupAccountId;
+      acc.bankName = bankName;
+      acc.owner = owner;
+      acc.iban = iban;
+      acc.bic = bic;
+      acc.accountNumber = accountNumber;
+      acc.dispoLimit = dispoLimit;
+      acc.notes = notes;
     }
   } else {
     // Add new
@@ -2256,7 +2640,16 @@ async function saveAccount(e) {
       type: type,
       icon: icon,
       hint: hint,
-      initialBalance: balance
+      initialBalance: balance,
+      hasBackupAccount: hasBackup,
+      backupAccountId: backupAccountId,
+      bankName: bankName,
+      owner: owner,
+      iban: iban,
+      bic: bic,
+      accountNumber: accountNumber,
+      dispoLimit: dispoLimit,
+      notes: notes
     });
   }
 
@@ -2300,20 +2693,175 @@ async function deleteAccount(accId) {
   const idx = appState.accounts.findIndex(a => a.id === accId);
   if (idx !== -1) {
     appState.accounts.splice(idx, 1);
+    // Verknüpfungen bereinigen, falls ein anderes Konto dieses Konto als Deckungskonto hatte
+    appState.accounts.forEach(a => {
+      if (a.backupAccountId === accId) {
+        a.backupAccountId = '';
+        a.hasBackupAccount = false;
+      }
+    });
     if (appState.initialBalances && appState.initialBalances[accId] !== undefined) {
       delete appState.initialBalances[accId];
     }
     await saveStateToEncryptedStorage();
     populateAllAccountDropdowns();
-  populateBudgetCategoryDropdown();
-  populateShoppingDropdowns();
-  renderShoppingCart();
+    populateBudgetCategoryDropdown();
+    populateShoppingDropdowns();
+    renderShoppingCart();
     renderAccountsViewList();
     updateOverview();
     announceNVDA(`Konto ${acc.name} gelöscht.`);
   }
 }
 
+// ============================================================================
+// BARGELD-ZÄHLHELFER (MÜNZ- & SCHEINEZÄHLER)
+// ============================================================================
+let currentCashCounterTarget = null;
+
+const CASH_DENOMINATIONS = [
+  { id: 'note-200', val: 200.0 },
+  { id: 'note-100', val: 100.0 },
+  { id: 'note-50',  val: 50.0 },
+  { id: 'note-20',  val: 20.0 },
+  { id: 'note-10',  val: 10.0 },
+  { id: 'note-5',   val: 5.0 },
+  { id: 'coin-200', val: 2.0 },
+  { id: 'coin-100', val: 1.0 },
+  { id: 'coin-50',  val: 0.50 },
+  { id: 'coin-20',  val: 0.20 },
+  { id: 'coin-10',  val: 0.10 },
+  { id: 'coin-5',   val: 0.05 },
+  { id: 'coin-2',   val: 0.02 },
+  { id: 'coin-1',   val: 0.01 }
+];
+
+function openCashCounterModal(target) {
+  currentCashCounterTarget = target || 'from-modal';
+  const modal = document.getElementById('cash-counter-modal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+
+  resetCashCounter();
+  calculateCashTotalLive();
+
+  const firstInput = document.getElementById('cash-count-note-50');
+  if (firstInput) firstInput.focus();
+  announceNVDA('Bargeld-Zählhelfer geöffnet. Zähle Münzen und Scheine.');
+}
+
+function closeCashCounterModal() {
+  const modal = document.getElementById('cash-counter-modal');
+  if (modal) modal.style.display = 'none';
+  if (currentCashCounterTarget === 'from-modal') {
+    const balInput = document.getElementById('account-modal-balance');
+    if (balInput) balInput.focus();
+  } else if (currentCashCounterTarget === 'income') {
+    const incInput = document.getElementById('inc-amount');
+    if (incInput) incInput.focus();
+  } else if (currentCashCounterTarget === 'expense') {
+    const expInput = document.getElementById('exp-amount');
+    if (expInput) expInput.focus();
+  }
+}
+
+function adjustCashCount(denomId, delta) {
+  const input = document.getElementById(`cash-count-${denomId}`);
+  if (!input) return;
+  let cur = parseInt(input.value, 10) || 0;
+  cur = Math.max(0, cur + delta);
+  input.value = cur;
+  calculateCashTotalLive();
+}
+
+function calculateCashTotalLive() {
+  let total = 0;
+  CASH_DENOMINATIONS.forEach(d => {
+    const input = document.getElementById(`cash-count-${d.id}`);
+    const subEl = document.getElementById(`cash-subtotal-${d.id}`);
+    const count = input ? (parseInt(input.value, 10) || 0) : 0;
+    const sub = Math.round(count * d.val * 100) / 100;
+    total += sub;
+    if (subEl) subEl.textContent = formatCurrency(sub);
+  });
+  total = Math.round(total * 100) / 100;
+  const totalEl = document.getElementById('cash-counter-total');
+  if (totalEl) totalEl.textContent = formatCurrency(total);
+  return total;
+}
+
+function resetCashCounter() {
+  CASH_DENOMINATIONS.forEach(d => {
+    const input = document.getElementById(`cash-count-${d.id}`);
+    const subEl = document.getElementById(`cash-subtotal-${d.id}`);
+    if (input) input.value = '0';
+    if (subEl) subEl.textContent = formatCurrency(0);
+  });
+  const totalEl = document.getElementById('cash-counter-total');
+  if (totalEl) totalEl.textContent = formatCurrency(0);
+}
+
+async function applyCashCounterTotal() {
+  const total = calculateCashTotalLive();
+  if (currentCashCounterTarget === 'from-modal') {
+    const balInput = document.getElementById('account-modal-balance');
+    if (balInput) {
+      balInput.value = total.toFixed(2);
+    }
+    closeCashCounterModal();
+    announceNVDA(`Gezähltes Bargeld von ${formatCurrency(total)} als Startguthaben übernommen.`);
+  } else if (currentCashCounterTarget === 'income') {
+    const incInput = document.getElementById('inc-amount');
+    if (incInput) {
+      incInput.value = total.toFixed(2);
+      if (typeof handleMainIncomeAmountInput === 'function') handleMainIncomeAmountInput();
+    }
+    const incAccountSelect = document.getElementById('inc-account');
+    if (incAccountSelect) {
+      const hasCash = Array.from(incAccountSelect.options).some(o => o.value === 'cash');
+      if (hasCash) incAccountSelect.value = 'cash';
+    }
+    closeCashCounterModal();
+    announceNVDA(`Gezähltes Bargeld von ${formatCurrency(total)} als Einnahme-Betrag übernommen.`);
+  } else if (currentCashCounterTarget === 'expense') {
+    const expInput = document.getElementById('exp-amount');
+    if (expInput) {
+      expInput.value = total.toFixed(2);
+      if (typeof handleMainExpenseAmountInput === 'function') handleMainExpenseAmountInput();
+    }
+    const expAccountSelect = document.getElementById('exp-account');
+    if (expAccountSelect) {
+      const hasCash = Array.from(expAccountSelect.options).some(o => o.value === 'cash');
+      if (hasCash) expAccountSelect.value = 'cash';
+    }
+    closeCashCounterModal();
+    announceNVDA(`Gezähltes Bargeld von ${formatCurrency(total)} als Ausgabe-Betrag übernommen.`);
+  } else {
+    // Ziel ist eine Konto-ID (z. B. 'cash')
+    const accId = currentCashCounterTarget;
+    const acc = appState.accounts.find(a => a.id === accId);
+    if (!acc) {
+      closeCashCounterModal();
+      return;
+    }
+    const todayStr = new Date().toISOString().split('T')[0];
+    const curBalances = calculateBalancesUpToDate(todayStr);
+    const curBal = curBalances[accId] !== undefined ? curBalances[accId] : 0;
+    const oldInit = Number(acc.initialBalance || 0);
+    const txDelta = curBal - oldInit;
+    const newInit = Math.round((total - txDelta) * 100) / 100;
+
+    acc.initialBalance = newInit;
+    if (!appState.initialBalances) appState.initialBalances = {};
+    appState.initialBalances[accId] = newInit;
+
+    await saveStateToEncryptedStorage();
+    closeCashCounterModal();
+    renderAccountsViewList();
+    updateOverview();
+    announceNVDA(`Bargeldbestand von ${acc.name} erfolgreich auf ${formatCurrency(total)} abgeglichen!`);
+  }
+}
 
 function autoUpdateFrequencyByDate(type) {
   const dateInput = document.getElementById(type + '-date');
@@ -2585,7 +3133,7 @@ async function handleAddCustomCategory(e) {
     Hauptkategorie: mainCatName,
     Unterkategorie_Geschaeft: subCatName,
     Datum: new Date().toLocaleString('de-DE'),
-    AppVersion: 'v6.0.2'
+    AppVersion: CURRENT_APP_VERSION
   });
 
   const port = window.__LOCAL_PORT__ || 48123;
@@ -2627,6 +3175,52 @@ async function handleAddCustomCategory(e) {
 
   announceNVDA('Kategorie ' + subCatName + ' wurde hinzugefügt und an den Entwickler übermittelt!');
   alert('✅ Die Kategorie "' + subCatName + '" (' + mainCatName + ') wurde sofort in deiner App gespeichert und an den Entwickler übermittelt!');
+}
+
+async function ensureCategoryExists(type, mainCatName, subCatName) {
+  if (!mainCatName) return false;
+  const safeType = type === 'income' ? 'inc' : (type === 'expense' ? 'exp' : type);
+
+  if (!appState.customCategories) {
+    appState.customCategories = { exp: {}, inc: {}, trf: {} };
+  }
+  if (!appState.customCategories[safeType]) {
+    appState.customCategories[safeType] = {};
+  }
+
+  let created = false;
+  const db = CATEGORIES_DB[safeType] || {};
+
+  if (!db[mainCatName]) {
+    if (!appState.customCategories[safeType][mainCatName]) {
+      appState.customCategories[safeType][mainCatName] = [];
+    }
+    created = true;
+  }
+
+  const existingSubs = db[mainCatName] || appState.customCategories[safeType][mainCatName] || [];
+  if (subCatName && !existingSubs.includes(subCatName)) {
+    if (!appState.customCategories[safeType][mainCatName]) {
+      appState.customCategories[safeType][mainCatName] = [];
+    }
+    if (!appState.customCategories[safeType][mainCatName].includes(subCatName)) {
+      appState.customCategories[safeType][mainCatName].push(subCatName);
+    }
+    created = true;
+  }
+
+  if (created) {
+    mergeCustomCategoriesIntoDB();
+    populateCategoriesDropdowns();
+    populateAllAccountDropdowns();
+    populateBudgetCategoryDropdown();
+    populateShoppingDropdowns();
+    renderShoppingCart();
+    renderAccountsViewList();
+    initCustomCatSettingsForm();
+    await saveStateToEncryptedStorage();
+  }
+  return created;
 }
 
 function populateCategoriesDropdowns() {
@@ -2731,6 +3325,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initTheme();
   initDatePickers();
   setupGlobalKeyboardShortcuts();
+  setupReceiptPasteAndDropListeners();
   populateCategoriesDropdowns();
   populateAllAccountDropdowns();
   populateBudgetCategoryDropdown();
@@ -2794,8 +3389,12 @@ function setupGlobalKeyboardShortcuts() {
     );
 
     if (e.key === 'Escape') {
+      closeReceiptModal();
+      closeReceiptTextPrompt();
       closeEditModal();
       closeEditRecModal();
+      closeAccountModal();
+      closeCashCounterModal();
       return;
     }
 
@@ -3296,7 +3895,25 @@ function isRecurringDueInMonth(rec, year, month) {
   const startY = rec.startYear !== undefined ? rec.startYear : 2025;
   const startM = rec.startMonth !== undefined ? rec.startMonth : 0;
 
+  // 1. Startmonat-Schutz: Vor Startdatum nicht fällig
   if (year < startY || (year === startY && month < startM)) return false;
+
+  // 2. Historien-Schutz (Endmonat / Beendet zum): Nach Endmonat nicht mehr fällig
+  if (rec.endYear !== undefined && rec.endMonth !== undefined) {
+    if (year > rec.endYear || (year === rec.endYear && month > rec.endMonth)) {
+      return false;
+    }
+  }
+
+  // 3. Pause-Schutz: Im Pausenzeitraum aussetzen (nicht fällig)
+  if (rec.pauseActive && rec.pauseStartYear !== undefined && rec.pauseEndYear !== undefined) {
+    const curVal = year * 12 + month;
+    const startVal = rec.pauseStartYear * 12 + rec.pauseStartMonth;
+    const endVal = rec.pauseEndYear * 12 + rec.pauseEndMonth;
+    if (curVal >= startVal && curVal <= endVal) {
+      return false;
+    }
+  }
 
   if (rec.interval === 'weekly' || rec.interval === 'monthly') return true;
   if (rec.interval === 'yearly') return parseInt(rec.yearlyMonth !== undefined ? rec.yearlyMonth : startM, 10) === month;
@@ -3309,6 +3926,50 @@ function isRecurringDueInMonth(rec, year, month) {
     return (month % 6) === startMOffset;
   }
   return true;
+}
+
+function getRecurringAmountAndInfo(rec, year, month, dateStr) {
+  // A) Gratis-Phase / Probe-Abo
+  if (rec.trialActive && rec.trialEndDate && dateStr <= rec.trialEndDate) {
+    return {
+      amount: 0.00,
+      suffix: ` (🎁 Kostenlose Testphase bis ${formatDateGerman(rec.trialEndDate)})`
+    };
+  }
+
+  const curVal = year * 12 + month;
+
+  // B) Zukünftige Preisänderung / Preiserhöhung
+  if (rec.futurePriceActive && rec.futureStartYear !== undefined && rec.futureStartMonth !== undefined) {
+    const futureVal = rec.futureStartYear * 12 + rec.futureStartMonth;
+    if (curVal >= futureVal) {
+      return {
+        amount: Number(rec.futureAmount || 0),
+        suffix: ` (📈 Neuer Preis: ${formatCurrency(rec.futureAmount)})`
+      };
+    }
+  }
+
+  // C) Rabatt-Phase mit späterem Normalpreis
+  if (rec.discountActive && rec.discountEndYear !== undefined && rec.discountEndMonth !== undefined) {
+    const discountEndVal = rec.discountEndYear * 12 + rec.discountEndMonth;
+    if (curVal <= discountEndVal) {
+      return {
+        amount: Number(rec.discountAmount || 0),
+        suffix: ` (🏷️ Rabatt-Phase: ${formatCurrency(rec.discountAmount)})`
+      };
+    } else {
+      return {
+        amount: Number(rec.regularAmount || rec.amount || 0),
+        suffix: ''
+      };
+    }
+  }
+
+  return {
+    amount: Number(rec.amount || 0),
+    suffix: ''
+  };
 }
 
 function getRecurringTransactionsForMonth(year, month) {
@@ -3325,6 +3986,7 @@ function getRecurringTransactionsForMonth(year, month) {
             const dayFormatted = String(d).padStart(2, '0');
             const mFormatted = String(month + 1).padStart(2, '0');
             const dateStr = `${year}-${mFormatted}-${dayFormatted}`;
+            const calc = getRecurringAmountAndInfo(rec, year, month, dateStr);
 
             list.push({
               id: `rec_instance_${rec.id}_${year}_${month}_${d}`,
@@ -3334,10 +3996,10 @@ function getRecurringTransactionsForMonth(year, month) {
               account: rec.account,
               fromAccount: rec.fromAccount,
               toAccount: rec.toAccount,
-              amount: Number(rec.amount),
+              amount: calc.amount,
               category: rec.category,
               subcategory: rec.subcategory || '',
-              description: `${rec.name} (Wöchentlich)`,
+              description: `${rec.name}${calc.suffix} (Wöchentlich)`,
               costType: 'fixed',
               date: dateStr
             });
@@ -3348,6 +4010,7 @@ function getRecurringTransactionsForMonth(year, month) {
         const dayFormatted = String(day).padStart(2, '0');
         const mFormatted = String(month + 1).padStart(2, '0');
         const dateStr = `${year}-${mFormatted}-${dayFormatted}`;
+        const calc = getRecurringAmountAndInfo(rec, year, month, dateStr);
 
         list.push({
           id: `rec_instance_${rec.id}_${year}_${month}`,
@@ -3357,10 +4020,10 @@ function getRecurringTransactionsForMonth(year, month) {
           account: rec.account,
           fromAccount: rec.fromAccount,
           toAccount: rec.toAccount,
-          amount: Number(rec.amount),
+          amount: calc.amount,
           category: rec.category,
           subcategory: rec.subcategory || '',
-          description: `${rec.name} (Dauerauftrag / Sparplan)`,
+          description: `${rec.name}${calc.suffix} (Dauerauftrag / Sparplan)`,
           costType: 'fixed',
           date: dateStr
         });
@@ -3537,8 +4200,8 @@ function updateOverview() {
     renderTransactionList(dayStats.incomeList, 'overview-income-items-feed', 'Keine Einnahmen an diesem Tag erfasst.');
     renderTransactionList(dayStats.expenseList, 'overview-expense-items-feed', 'Keine Ausgaben an diesem Tag erfasst.');
     renderTransactionList(dayStats.transferList, 'overview-transfer-items-feed', 'Keine Umbuchungen an diesem Tag erfasst.');
-    runPurchaseSimulation();
-        populateFilterAccountDropdown();
+        renderShoppingList();
+  populateFilterAccountDropdown();
     renderExpenseRankings(dayStats.expenseList);
     checkLiquidityWarning(dayStats.balances);
     renderBudgetsList();
@@ -3611,7 +4274,6 @@ function updateOverview() {
     renderTransactionList(incomeList, 'overview-income-items-feed', 'Keine Einnahmen in dieser Kalenderwoche erfasst.');
     renderTransactionList(expenseList, 'overview-expense-items-feed', 'Keine Ausgaben in dieser Kalenderwoche erfasst.');
     renderTransactionList(transferList, 'overview-transfer-items-feed', 'Keine Umbuchungen in dieser Kalenderwoche erfasst.');
-    runPurchaseSimulation();
         populateFilterAccountDropdown();
     renderExpenseRankings(allTx.filter(t => t.type === 'expense'));
     checkLiquidityWarning(weekBalances);
@@ -3651,7 +4313,6 @@ function updateOverview() {
     renderTransactionList(stats.incomeList, 'overview-income-items-feed', 'Keine Einnahmen in diesem Monat erfasst.');
     renderTransactionList(stats.expenseList, 'overview-expense-items-feed', 'Keine Ausgaben in diesem Monat erfasst.');
     renderTransactionList(stats.transferList, 'overview-transfer-items-feed', 'Keine Umbuchungen oder Sparpläne in diesem Monat erfasst.');
-    runPurchaseSimulation();
         populateFilterAccountDropdown();
     renderExpenseRankings(stats.expenseList);
     checkLiquidityWarning(stats.balances);
@@ -3746,8 +4407,6 @@ function updateOverview() {
       `).join('');
     }
   }
-
-  runPurchaseSimulation();
       populateFilterAccountDropdown();
   renderExpenseRankings(periodAllTxs.filter(t => t.type === 'expense'));
   checkLiquidityWarning(periodEndBalances);
@@ -3822,8 +4481,12 @@ function renderTransactionList(list, containerId, emptyText) {
       : `<button type="button" class="btn-edit-tx" onclick="openEditModal('${tx.id}')" title="Buchung bearbeiten" aria-label="Buchung ${tx.category || ''} bearbeiten">✏️ Bearbeiten</button>`;
 
     const deleteBtn = tx.isRecurring
-      ? `<button type="button" class="btn-delete-tx" onclick="deleteRecurring('${tx.recurringId}')" title="Dauerauftrag / Sparplan löschen" aria-label="Dauerauftrag ${tx.category || tx.name || ''} löschen">🗑️ Löschen</button>`
+      ? `<button type="button" class="btn-delete-tx" onclick="openEndOrDeleteRecModal('${tx.recurringId}')" title="Dauerauftrag / Sparplan beenden oder löschen" aria-label="Dauerauftrag ${tx.category || tx.name || ''} beenden oder löschen">🗑️ Beenden / Löschen</button>`
       : `<button type="button" class="btn-delete-tx" onclick="deleteTransaction('${tx.id}')" title="Buchung löschen" aria-label="Buchung ${tx.category || ''} löschen">🗑️ Löschen</button>`;
+
+    const receiptBtn = tx.receipt
+      ? `<button type="button" class="btn-receipt-tx" onclick="openReceiptModalByTxId('${tx.id}')" title="Beleg / Quittung ansehen" aria-label="Beleg zu ${escapeHTML(tx.category || tx.name || '')} ansehen">🧾 Beleg</button>`
+      : '';
 
     const hasSub = tx.subcategory && tx.subcategory !== 'Gesamt / Allgemein' && tx.subcategory !== tx.category;
     let categoryDisplayHtml = '';
@@ -3848,11 +4511,13 @@ function renderTransactionList(list, containerId, emptyText) {
             <span class="tx-cat-name">${categoryDisplayHtml}</span>
             <span class="tx-account-badge">${accountBadgeText}</span>
             ${statusBadge}
+            ${tx.receipt ? '<span class="status-badge" style="background: rgba(2, 132, 199, 0.14); color: var(--accent-action); border: 1px solid var(--accent-action);">🧾 Beleg</span>' : ''}
             ${tx.description ? `<span class="tx-note">${tx.description}</span>` : ''}
           </div>
         </div>
         <div class="tx-amount-col">
           <span class="tx-sum ${colorClass}">${sign ? sign + ' ' : ''}${formatCurrency(tx.amount)}</span>
+          ${receiptBtn}
           ${editBtn}
           ${deleteBtn}
         </div>
@@ -3918,9 +4583,42 @@ function toggleExpenseFrequencyFields() {
 }
 
 function handleMainExpenseAmountInput() {
+  const mainAmountInput = document.getElementById('exp-amount');
   const freq = document.getElementById('exp-frequency') ? document.getElementById('exp-frequency').value : 'once';
   if (freq === 'installment') {
     handleInstallmentCalculation();
+  }
+  const splitToggle = document.getElementById('exp-split-toggle');
+  if (splitToggle && splitToggle.checked) {
+    const totalAmt = parseFloat(mainAmountInput.value) || 0;
+    if (expenseSplitRows && expenseSplitRows.length === 2 && expenseSplitRows[0].amount !== '') {
+      const amt0 = parseFloat(expenseSplitRows[0].amount) || 0;
+      if (totalAmt >= amt0) {
+        const remainder = Math.round((totalAmt - amt0) * 100) / 100;
+        expenseSplitRows[1].amount = remainder;
+        const secondInput = document.getElementById('exp-split-amt-1');
+        if (secondInput) secondInput.value = remainder;
+      }
+    }
+    updateExpenseSplitSummary();
+  }
+}
+
+function handleMainIncomeAmountInput() {
+  const mainAmountInput = document.getElementById('inc-amount');
+  const splitToggle = document.getElementById('inc-split-toggle');
+  if (splitToggle && splitToggle.checked) {
+    const totalAmt = parseFloat(mainAmountInput.value) || 0;
+    if (incomeSplitRows && incomeSplitRows.length === 2 && incomeSplitRows[0].amount !== '') {
+      const amt0 = parseFloat(incomeSplitRows[0].amount) || 0;
+      if (totalAmt >= amt0) {
+        const remainder = Math.round((totalAmt - amt0) * 100) / 100;
+        incomeSplitRows[1].amount = remainder;
+        const secondInput = document.getElementById('inc-split-amt-1');
+        if (secondInput) secondInput.value = remainder;
+      }
+    }
+    updateIncomeSplitSummary();
   }
 }
 
@@ -4054,11 +4752,442 @@ function toggleTransferFrequencyFields() {
   if (document.getElementById('trf-month-day-group')) document.getElementById('trf-month-day-group').style.display = isWeekly ? 'none' : 'block';
 }
 
+function setQuickStartMonth(type, offset) {
+  const input = document.getElementById(`${type}-start-month`);
+  if (!input) return;
+  const d = new Date();
+  d.setMonth(d.getMonth() + offset);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  input.value = `${y}-${m}`;
+  const label = offset === 0 ? 'Diesen Monat' : 'Nächsten Monat';
+  if (typeof announceNVDA === 'function') {
+    announceNVDA(`Startmonat auf ${label} (${MONTH_NAMES[d.getMonth()]} ${y}) gesetzt.`);
+  }
+}
+
+// ----------------------------------------------------------------------------
+// VERTRAGS-, TESTPHASEN-, RABATT- & PAUSEN-FUNKTIONEN (v6.4.0)
+// ----------------------------------------------------------------------------
+function toggleTrialSection(prefix) {
+  const toggle = document.getElementById(`${prefix}-rec-trial-toggle`);
+  const section = document.getElementById(`${prefix}-rec-trial-section`);
+  if (!section) return;
+  const isChecked = toggle ? toggle.checked : false;
+  section.style.display = isChecked ? 'block' : 'none';
+  if (isChecked) {
+    updateTrialEndDate(prefix);
+    if (typeof announceNVDA === 'function') {
+      announceNVDA('Testphasen-Optionen eingeblendet.');
+    }
+  }
+}
+
+function calculateTrialEndDate(unit, duration, baseDateStr) {
+  const d = baseDateStr ? new Date(baseDateStr + 'T00:00:00') : new Date();
+  if (unit === 'days') {
+    d.setDate(d.getDate() + duration);
+  } else if (unit === 'weeks') {
+    d.setDate(d.getDate() + (duration * 7));
+  } else if (unit === 'months') {
+    d.setMonth(d.getMonth() + duration);
+  }
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function updateTrialEndDate(prefix) {
+  const unitEl = document.getElementById(`${prefix}-rec-trial-unit`);
+  const durEl = document.getElementById(`${prefix}-rec-trial-duration`);
+  const sumEl = document.getElementById(`${prefix}-rec-trial-summary`);
+  const endInput = document.getElementById(`${prefix}-rec-trial-end`);
+  if (!unitEl || !durEl) return;
+
+  const unit = unitEl.value || 'days';
+  const dur = parseInt(durEl.value, 10) || 14;
+  const endDStr = calculateTrialEndDate(unit, dur);
+  const endDFormatted = formatDateGerman(endDStr);
+
+  if (sumEl) sumEl.textContent = `Kostenlos bis zum: ${endDFormatted}`;
+  if (endInput) endInput.value = endDStr;
+}
+
+function setQuickTrial(prefix, unit, duration) {
+  const unitEl = document.getElementById(`${prefix}-rec-trial-unit`);
+  const durEl = document.getElementById(`${prefix}-rec-trial-duration`);
+  if (unitEl) unitEl.value = unit;
+  if (durEl) durEl.value = duration;
+  updateTrialEndDate(prefix);
+  if (typeof announceNVDA === 'function') {
+    announceNVDA(`Testphase auf ${duration} ${unit === 'days' ? 'Tage' : (unit === 'weeks' ? 'Wochen' : 'Monate')} gesetzt.`);
+  }
+}
+
+function toggleDiscountSection(prefix) {
+  const toggle = document.getElementById(`${prefix}-rec-discount-toggle`);
+  const section = document.getElementById(`${prefix}-rec-discount-section`);
+  if (!section) return;
+  const isChecked = toggle ? toggle.checked : false;
+  section.style.display = isChecked ? 'block' : 'none';
+  if (isChecked && typeof announceNVDA === 'function') {
+    announceNVDA('Rabattphasen-Optionen eingeblendet.');
+  }
+}
+
+function setQuickDiscountMonths(prefix, months) {
+  const el = document.getElementById(`${prefix}-rec-discount-months`);
+  if (el) el.value = months;
+  if (typeof announceNVDA === 'function') {
+    announceNVDA(`Rabatt-Dauer auf ${months} Monate gesetzt.`);
+  }
+}
+
+function toggleContractSection(prefix) {
+  const toggle = document.getElementById(`${prefix}-rec-contract-toggle`);
+  const section = document.getElementById(`${prefix}-rec-contract-section`);
+  if (!section) return;
+  const isChecked = toggle ? toggle.checked : false;
+  section.style.display = isChecked ? 'block' : 'none';
+  if (isChecked && typeof announceNVDA === 'function') {
+    announceNVDA('Vertragsdetails-Felder eingeblendet.');
+  }
+}
+
+function toggleEditFuturePriceSection() {
+  const toggle = document.getElementById('edit-rec-future-price-toggle');
+  const section = document.getElementById('edit-rec-future-price-section');
+  if (!section) return;
+  const isChecked = toggle ? toggle.checked : false;
+  section.style.display = isChecked ? 'block' : 'none';
+  if (isChecked) {
+    if (!document.getElementById('edit-rec-future-month').value) {
+      setQuickFutureMonth(1);
+    }
+    if (typeof announceNVDA === 'function') {
+      announceNVDA('Zukünftige Preisänderung eingeblendet.');
+    }
+  }
+}
+
+function setQuickFutureMonth(offsetMonths) {
+  const el = document.getElementById('edit-rec-future-month');
+  if (!el) return;
+  const d = new Date();
+  d.setMonth(d.getMonth() + offsetMonths);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  el.value = `${y}-${m}`;
+  if (typeof announceNVDA === 'function') {
+    announceNVDA(`Preiserhöhung gültig ab ${MONTH_NAMES[d.getMonth()]} ${y}.`);
+  }
+}
+
+function toggleEditPauseSection() {
+  const toggle = document.getElementById('edit-rec-pause-toggle');
+  const section = document.getElementById('edit-rec-pause-section');
+  if (!section) return;
+  const isChecked = toggle ? toggle.checked : false;
+  section.style.display = isChecked ? 'block' : 'none';
+  if (isChecked) {
+    if (!document.getElementById('edit-rec-pause-start-month').value) {
+      setQuickPause(1);
+    }
+    if (typeof announceNVDA === 'function') {
+      announceNVDA('Pause-Optionen eingeblendet.');
+    }
+  }
+}
+
+function setQuickPause(months) {
+  const startEl = document.getElementById('edit-rec-pause-start-month');
+  const endEl = document.getElementById('edit-rec-pause-end-month');
+  if (!startEl || !endEl) return;
+  const d1 = new Date();
+  const y1 = d1.getFullYear();
+  const m1 = String(d1.getMonth() + 1).padStart(2, '0');
+  startEl.value = `${y1}-${m1}`;
+
+  const d2 = new Date();
+  d2.setMonth(d2.getMonth() + (months - 1));
+  const y2 = d2.getFullYear();
+  const m2 = String(d2.getMonth() + 1).padStart(2, '0');
+  endEl.value = `${y2}-${m2}`;
+
+  if (typeof announceNVDA === 'function') {
+    announceNVDA(`Pause für ${months} Monat(e) eingestellt (bis ${MONTH_NAMES[d2.getMonth()]} ${y2}).`);
+  }
+}
+
+function toggleEditEndSection() {
+  const toggle = document.getElementById('edit-rec-end-toggle');
+  const section = document.getElementById('edit-rec-end-section');
+  if (!section) return;
+  const isChecked = toggle ? toggle.checked : false;
+  section.style.display = isChecked ? 'block' : 'none';
+  if (isChecked) {
+    if (!document.getElementById('edit-rec-end-month').value) {
+      setQuickEndMonth(0);
+    }
+    if (typeof announceNVDA === 'function') {
+      announceNVDA('Beendigungsmonat eingeblendet.');
+    }
+  }
+}
+
+function setQuickEndMonth(offset) {
+  const el = document.getElementById('edit-rec-end-month');
+  if (!el) return;
+  const d = new Date();
+  d.setMonth(d.getMonth() + offset);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  el.value = `${y}-${m}`;
+  if (typeof announceNVDA === 'function') {
+    announceNVDA(`Beendet zum ${MONTH_NAMES[d.getMonth()]} ${y}.`);
+  }
+}
+
+function addMonthsToYearMonth(year, month, addM) {
+  const totalM = month + addM;
+  const y = year + Math.floor(totalM / 12);
+  const m = ((totalM % 12) + 12) % 12;
+  return { year: y, month: m };
+}
+
+// ----------------------------------------------------------------------------
+// MODAL: DAUERAUFTRAG BEENDEN ODER LÖSCHEN (HISTORIEN-SCHUTZ)
+// ----------------------------------------------------------------------------
+function openEndOrDeleteRecModal(recId) {
+  const rec = (appState.recurring || []).find(r => r.id === recId);
+  if (!rec) return;
+
+  const idInput = document.getElementById('end-or-delete-rec-id');
+  const subText = document.getElementById('end-or-delete-rec-sub');
+  if (idInput) idInput.value = recId;
+  if (subText) {
+    subText.innerHTML = `Wie möchtest du mit dem Dauerauftrag <strong>"${escapeHTML(rec.name || rec.category)}"</strong> (${formatCurrency(rec.amount)}) verfahren?`;
+  }
+
+  const modal = document.getElementById('end-or-delete-rec-modal');
+  if (modal) {
+    modal.style.display = 'flex';
+    if (typeof announceNVDA === 'function') {
+      announceNVDA(`Dauerauftrag ${rec.name || rec.category} beenden oder löschen geöffnet.`);
+    }
+  }
+}
+
+function closeEndOrDeleteRecModal() {
+  const modal = document.getElementById('end-or-delete-rec-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function confirmEndRecurring() {
+  const idInput = document.getElementById('end-or-delete-rec-id');
+  if (!idInput) return;
+  const recId = idInput.value;
+  const rec = (appState.recurring || []).find(r => r.id === recId);
+  if (!rec) return;
+
+  const today = new Date();
+  rec.endYear = today.getFullYear();
+  rec.endMonth = today.getMonth();
+
+  await saveStateToEncryptedStorage();
+  closeEndOrDeleteRecModal();
+  renderSettingsRecurringList();
+  updateOverview();
+
+  const msg = `Dauerauftrag "${rec.name || rec.category}" zum Monatsende beendet! Alle vergangenen Monate bleiben unverändert erhalten.`;
+  if (typeof announceNVDA === 'function') announceNVDA(msg);
+  alert(msg);
+}
+
+async function confirmHardDeleteRecurring() {
+  const idInput = document.getElementById('end-or-delete-rec-id');
+  if (!idInput) return;
+  const recId = idInput.value;
+  closeEndOrDeleteRecModal();
+  await deleteRecurring(recId);
+}
+
+// ----------------------------------------------------------------------------
+// OPTIONALE SPLIT-ZAHLUNG FÜR AUSGABEN
+// ----------------------------------------------------------------------------
+let expenseSplitRows = [];
+
+function getExpenseSplitAccountOptionsHtml(selectedAccId) {
+  ensureAccountsInitialized();
+  return appState.accounts.map(acc => {
+    const icon = acc.icon || ACCOUNT_TYPE_ICONS[acc.type] || '💳';
+    const sel = (acc.id === selectedAccId) ? 'selected' : '';
+    return `<option value="${escapeHTML(acc.id)}" ${sel}>${escapeHTML(acc.name)}</option>`;
+  }).join('');
+}
+
+function toggleExpenseSplitPayment() {
+  const toggle = document.getElementById('exp-split-toggle');
+  const splitSec = document.getElementById('exp-split-section');
+  const accGroup = document.getElementById('exp-account-group');
+  const singleAcc = document.getElementById('exp-account');
+  const isSplit = toggle && toggle.checked;
+
+  if (splitSec) splitSec.style.display = isSplit ? 'block' : 'none';
+  if (accGroup) accGroup.style.display = isSplit ? 'none' : 'block';
+  if (singleAcc) singleAcc.required = !isSplit;
+
+  if (isSplit) {
+    if (!expenseSplitRows || expenseSplitRows.length === 0) {
+      initExpenseSplitRows();
+    } else {
+      renderExpenseSplitRows();
+    }
+    if (typeof announceNVDA === 'function') {
+      announceNVDA('Split-Zahlung aktiviert. Du kannst den Betrag nun auf mehrere Konten aufteilen.');
+    }
+  } else {
+    if (typeof announceNVDA === 'function') {
+      announceNVDA('Split-Zahlung deaktiviert. Einfache Kontoauswahl wieder aktiv.');
+    }
+  }
+}
+
+function initExpenseSplitRows() {
+  ensureAccountsInitialized();
+  const totalAmt = parseFloat(document.getElementById('exp-amount').value) || 0;
+  const acc1 = appState.accounts[0] ? appState.accounts[0].id : 'bank';
+  const acc2 = appState.accounts[1] ? appState.accounts[1].id : (appState.accounts[0] ? appState.accounts[0].id : 'cash');
+
+  const half = Math.round((totalAmt / 2) * 100) / 100;
+  const rest = Math.round((totalAmt - half) * 100) / 100;
+
+  expenseSplitRows = [
+    { account: acc1, amount: half > 0 ? half : '' },
+    { account: acc2, amount: rest > 0 ? rest : '' }
+  ];
+  renderExpenseSplitRows();
+}
+
+function renderExpenseSplitRows() {
+  const container = document.getElementById('exp-split-rows-container');
+  if (!container) return;
+
+  container.innerHTML = expenseSplitRows.map((row, idx) => {
+    const canRemove = expenseSplitRows.length > 2;
+    return `
+      <div class="split-row" data-index="${idx}" style="display: flex; gap: 8px; align-items: flex-end; background: #fff; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border-color, #ccc); flex-wrap: wrap;">
+        <div style="flex: 2; min-width: 160px;">
+          <label for="exp-split-acc-${idx}" class="field-label" style="font-size: 13px; margin-bottom: 2px;">
+            <strong>Konto ${idx + 1}:</strong>
+          </label>
+          <select id="exp-split-acc-${idx}" class="large-select" onchange="onExpenseSplitAccountChange(${idx}, this.value)">
+            ${getExpenseSplitAccountOptionsHtml(row.account)}
+          </select>
+        </div>
+        <div style="flex: 1; min-width: 120px;">
+          <label for="exp-split-amt-${idx}" class="field-label" style="font-size: 13px; margin-bottom: 2px;">
+            <strong>Teilbetrag (€):</strong>
+          </label>
+          <input type="number" step="0.01" min="0.01" id="exp-split-amt-${idx}" class="large-input" value="${row.amount !== '' ? row.amount : ''}" placeholder="0,00" oninput="onExpenseSplitAmountInput(${idx}, this.value)">
+        </div>
+        ${canRemove ? `
+          <button type="button" class="btn btn-secondary" onclick="removeExpenseSplitRow(${idx})" style="padding: 10px 12px; margin-bottom: 2px; color: #D32F2F;" aria-label="Konto ${idx + 1} entfernen">
+            🗑️
+          </button>
+        ` : ''}
+      </div>
+    `;
+  }).join('');
+
+  updateExpenseSplitSummary();
+}
+
+function addExpenseSplitRow() {
+  ensureAccountsInitialized();
+  const totalAmt = parseFloat(document.getElementById('exp-amount').value) || 0;
+  const currentSum = expenseSplitRows.reduce((sum, r) => sum + (parseFloat(r.amount) || 0), 0);
+  const diff = Math.max(0, Math.round((totalAmt - currentSum) * 100) / 100);
+
+  const usedAccs = expenseSplitRows.map(r => r.account);
+  const unusedAcc = appState.accounts.find(a => !usedAccs.includes(a.id));
+  const newAccId = unusedAcc ? unusedAcc.id : (appState.accounts[0] ? appState.accounts[0].id : 'bank');
+
+  expenseSplitRows.push({
+    account: newAccId,
+    amount: diff > 0 ? diff : ''
+  });
+
+  renderExpenseSplitRows();
+  if (typeof announceNVDA === 'function') {
+    announceNVDA(`Konto ${expenseSplitRows.length} hinzugefügt.`);
+  }
+}
+
+function removeExpenseSplitRow(idx) {
+  if (expenseSplitRows.length <= 2) return;
+  expenseSplitRows.splice(idx, 1);
+  renderExpenseSplitRows();
+  if (typeof announceNVDA === 'function') {
+    announceNVDA(`Konto entfernt. Verbleibend: ${expenseSplitRows.length} Konten.`);
+  }
+}
+
+function onExpenseSplitAccountChange(idx, newAcc) {
+  if (expenseSplitRows[idx]) {
+    expenseSplitRows[idx].account = newAcc;
+  }
+}
+
+function onExpenseSplitAmountInput(idx, val) {
+  const amt = parseFloat(val);
+  if (expenseSplitRows[idx]) {
+    expenseSplitRows[idx].amount = isNaN(amt) ? '' : amt;
+  }
+
+  const totalAmt = parseFloat(document.getElementById('exp-amount').value) || 0;
+  if (expenseSplitRows.length === 2 && idx === 0 && !isNaN(amt) && totalAmt > amt) {
+    const remainder = Math.round((totalAmt - amt) * 100) / 100;
+    expenseSplitRows[1].amount = remainder;
+    const secondInput = document.getElementById('exp-split-amt-1');
+    if (secondInput) secondInput.value = remainder;
+  }
+
+  updateExpenseSplitSummary();
+}
+
+function updateExpenseSplitSummary() {
+  const summaryEl = document.getElementById('exp-split-summary');
+  if (!summaryEl) return;
+
+  const totalAmt = parseFloat(document.getElementById('exp-amount').value) || 0;
+  const currentSum = expenseSplitRows.reduce((sum, r) => sum + (parseFloat(r.amount) || 0), 0);
+  const diff = Math.round((totalAmt - currentSum) * 100) / 100;
+
+  if (Math.abs(diff) < 0.005 && totalAmt > 0) {
+    summaryEl.style.borderColor = '#2E7D32';
+    summaryEl.style.color = '#1B5E20';
+    summaryEl.style.background = 'rgba(76, 175, 80, 0.1)';
+    summaryEl.innerHTML = `🟢 <strong>Vollständig aufgeteilt:</strong> ${formatCurrency(currentSum)} von ${formatCurrency(totalAmt)} (Rest: 0,00 €)`;
+  } else if (diff > 0) {
+    summaryEl.style.borderColor = '#F57C00';
+    summaryEl.style.color = '#E65100';
+    summaryEl.style.background = 'rgba(255, 152, 0, 0.1)';
+    summaryEl.innerHTML = `🟡 <strong>Aufgeteilt:</strong> ${formatCurrency(currentSum)} von ${formatCurrency(totalAmt)} (Noch offen: ${formatCurrency(diff)})`;
+  } else {
+    summaryEl.style.borderColor = '#D32F2F';
+    summaryEl.style.color = '#B71C1C';
+    summaryEl.style.background = 'rgba(244, 67, 54, 0.1)';
+    summaryEl.innerHTML = `🔴 <strong>Überhang:</strong> ${formatCurrency(currentSum)} von ${formatCurrency(totalAmt)} (${formatCurrency(Math.abs(diff))} zu viel)`;
+  }
+}
+
 async function handleAddExpense(e) {
   e.preventDefault();
   const amount = parseFloat(document.getElementById('exp-amount').value);
   const freq = document.getElementById('exp-frequency').value;
-  const account = document.getElementById('exp-account').value;
+  const account = document.getElementById('exp-account') ? document.getElementById('exp-account').value : 'bank';
   const category = document.getElementById('exp-category').value;
   const subcategory = document.getElementById('exp-subcategory') ? document.getElementById('exp-subcategory').value : '';
   const date = document.getElementById('exp-date').value;
@@ -4069,6 +5198,37 @@ async function handleAddExpense(e) {
   const todayStr = new Date().toISOString().split('T')[0];
   const isFuture = date > todayStr;
   const isPlanned = (freq === 'planned') || isFuture;
+
+  // Split-Zahlung prüfen
+  const splitToggle = document.getElementById('exp-split-toggle');
+  const isSplit = splitToggle && splitToggle.checked;
+  let splitRowsValid = [];
+
+  if (isSplit) {
+    splitRowsValid = expenseSplitRows.filter(r => r.account && parseFloat(r.amount) > 0);
+    if (splitRowsValid.length < 2) {
+      if (typeof announceNVDA === 'function') announceNVDA('Fehler: Für eine Split-Zahlung müssen mindestens 2 Konten mit Beträgen angegeben werden.', true);
+      alert('⚠️ Bitte gib mindestens 2 Konten mit Beträgen für die Aufteilung an.');
+      return;
+    }
+    const splitSum = Math.round(splitRowsValid.reduce((sum, r) => sum + parseFloat(r.amount), 0) * 100) / 100;
+    const expectedTotal = Math.round(amount * 100) / 100;
+    if (Math.abs(splitSum - expectedTotal) > 0.01) {
+      if (typeof announceNVDA === 'function') announceNVDA(`Fehler: Die Summe der Konten (${formatCurrency(splitSum)}) stimmt nicht mit dem Kaufbetrag (${formatCurrency(expectedTotal)}) überein. Differenz: ${formatCurrency(Math.abs(splitSum - expectedTotal))}`, true);
+      alert(`⚠️ Die Summe der aufgeteilten Konten (${formatCurrency(splitSum)}) stimmt nicht mit dem Gesamtkaufpreis (${formatCurrency(expectedTotal)}) überein!\n\nDifferenz: ${formatCurrency(Math.abs(splitSum - expectedTotal))}`);
+      return;
+    }
+  }
+
+  // Startmonat für Daueraufträge
+  let recStartYear = selectedYear;
+  let recStartMonth = selectedMonth;
+  const expStartMonthEl = document.getElementById('exp-start-month');
+  if (expStartMonthEl && expStartMonthEl.value && expStartMonthEl.value.includes('-')) {
+    const parts = expStartMonthEl.value.split('-');
+    recStartYear = parseInt(parts[0], 10);
+    recStartMonth = parseInt(parts[1], 10) - 1;
+  }
 
   if (freq === 'installment') {
     const totalInput = document.getElementById('exp-installment-total');
@@ -4177,8 +5337,8 @@ async function handleAddExpense(e) {
       name: desc ? `${desc} (${provLabel})` : `${provLabel} ${category}`,
       interval: recInterval,
       day: day,
-      startYear: selectedYear,
-      startMonth: selectedMonth,
+      startYear: recStartYear,
+      startMonth: recStartMonth,
       isInstallment: true,
       installmentType: instType,
       installmentProvider: provider,
@@ -4200,51 +5360,393 @@ async function handleAddExpense(e) {
   } else if (['weekly', 'monthly', 'quarterly', 'halfyear', 'yearly'].includes(freq)) {
     const day = parseInt(document.getElementById('exp-rec-day').value, 10) || 1;
     const weekday = document.getElementById('exp-rec-weekday') ? parseInt(document.getElementById('exp-rec-weekday').value, 10) : 5;
+
+    // Vertrags-, Testphasen- & Rabatt-Daten erfassen
+    const trialToggle = document.getElementById('exp-rec-trial-toggle');
+    const isTrial = trialToggle ? trialToggle.checked : false;
+    let trialData = {};
+    if (isTrial) {
+      const u = document.getElementById('exp-rec-trial-unit').value || 'days';
+      const dur = parseInt(document.getElementById('exp-rec-trial-duration').value, 10) || 14;
+      const endD = calculateTrialEndDate(u, dur);
+      trialData = {
+        trialActive: true,
+        trialUnit: u,
+        trialDuration: dur,
+        trialStartDate: new Date().toISOString().split('T')[0],
+        trialEndDate: endD
+      };
+    }
+
+    const discountToggle = document.getElementById('exp-rec-discount-toggle');
+    const isDiscount = discountToggle ? discountToggle.checked : false;
+    let discountData = {};
+    if (isDiscount) {
+      const discAmt = parseFloat(document.getElementById('exp-rec-discount-amount').value) || 0;
+      const discMonths = parseInt(document.getElementById('exp-rec-discount-months').value, 10) || 12;
+      const regAmt = parseFloat(document.getElementById('exp-rec-discount-regular').value) || amount;
+      const startY = recStartYear !== undefined ? recStartYear : new Date().getFullYear();
+      const startM = recStartMonth !== undefined ? recStartMonth : new Date().getMonth();
+      const endObj = addMonthsToYearMonth(startY, startM, discMonths - 1);
+      discountData = {
+        discountActive: true,
+        discountAmount: discAmt,
+        discountMonths: discMonths,
+        discountEndYear: endObj.year,
+        discountEndMonth: endObj.month,
+        regularAmount: regAmt
+      };
+    }
+
+    const contractToggle = document.getElementById('exp-rec-contract-toggle');
+    const hasContract = contractToggle ? contractToggle.checked : false;
+    let contractData = {};
+    if (hasContract) {
+      contractData = {
+        hasContractDetails: true,
+        contractNumber: (document.getElementById('exp-rec-contract-number').value || '').trim(),
+        minTermDate: document.getElementById('exp-rec-min-term').value || '',
+        noticePeriod: (document.getElementById('exp-rec-notice-period').value || '').trim(),
+        hotline: (document.getElementById('exp-rec-hotline').value || '').trim(),
+        contractNotes: (document.getElementById('exp-rec-notes').value || '').trim()
+      };
+    }
     
-    appState.recurring.push({
-      id: `rec_${Date.now()}`,
-      type: 'expense',
-      account: account,
-      amount: amount,
-      category: category,
-      subcategory: subcategory,
-      name: desc || (subcategory ? `${category} (${subcategory})` : category),
-      interval: freq,
-      day: day,
-      weekday: weekday,
-      startYear: selectedYear,
-      startMonth: selectedMonth,
-      active: true
-    });
-    announceNVDA(`Dauerhafte Ausgabe ${category} über ${formatCurrency(amount)} gespeichert!`);
+    if (isSplit) {
+      const splitId = `split_rec_${Date.now()}`;
+      splitRowsValid.forEach((row, idx) => {
+        const rowAmt = parseFloat(row.amount);
+        const accName = formatAccountName(row.account);
+        const partText = `(Split ${idx + 1}/${splitRowsValid.length}: ${formatCurrency(rowAmt)} von ${accName})`;
+        const recName = desc ? `${desc} ${partText}` : `${category} ${partText}`;
+
+        appState.recurring.push({
+          id: `rec_${Date.now()}_${idx}`,
+          splitId: splitId,
+          splitIndex: idx + 1,
+          splitTotalCount: splitRowsValid.length,
+          splitTotalAmount: amount,
+          type: 'expense',
+          account: row.account,
+          amount: rowAmt,
+          category: category,
+          subcategory: subcategory,
+          name: recName,
+          interval: freq,
+          day: day,
+          weekday: weekday,
+          startYear: recStartYear,
+          startMonth: recStartMonth,
+          active: true,
+          ...trialData,
+          ...discountData,
+          ...contractData
+        });
+      });
+      announceNVDA(`Dauerhafte Ausgabe ${category} über ${formatCurrency(amount)} aufgeteilt auf ${splitRowsValid.length} Konten gespeichert!`);
+    } else {
+      appState.recurring.push({
+        id: `rec_${Date.now()}`,
+        type: 'expense',
+        account: account,
+        amount: amount,
+        category: category,
+        subcategory: subcategory,
+        name: desc || (subcategory ? `${category} (${subcategory})` : category),
+        interval: freq,
+        day: day,
+        weekday: weekday,
+        startYear: recStartYear,
+        startMonth: recStartMonth,
+        active: true,
+        ...trialData,
+        ...discountData,
+        ...contractData
+      });
+      announceNVDA(`Dauerhafte Ausgabe ${category} über ${formatCurrency(amount)} gespeichert!`);
+    }
   } else {
-    appState.transactions.push({
-      id: `tx_${Date.now()}`,
-      type: 'expense',
-      account: account,
-      amount: amount,
-      category: category,
-      subcategory: subcategory,
-      description: desc,
-      isPlanned: isPlanned,
-      date: date
-    });
-    announceNVDA(`Ausgabe ${category} über ${formatCurrency(amount)} ${isPlanned ? 'geplant' : 'gebucht'}!`);
+    if (isSplit) {
+      const splitId = `split_${Date.now()}`;
+      splitRowsValid.forEach((row, idx) => {
+        const rowAmt = parseFloat(row.amount);
+        const accName = formatAccountName(row.account);
+        const partText = `(Split ${idx + 1}/${splitRowsValid.length}: ${formatCurrency(rowAmt)} von ${accName})`;
+        const finalDesc = desc ? `${desc} ${partText}` : `Split-Zahlung ${partText}`;
+
+        const splitTx = {
+          id: `tx_${Date.now()}_${idx}`,
+          splitId: splitId,
+          splitIndex: idx + 1,
+          splitTotalCount: splitRowsValid.length,
+          splitTotalAmount: amount,
+          type: 'expense',
+          account: row.account,
+          amount: rowAmt,
+          category: category,
+          subcategory: subcategory,
+          description: finalDesc,
+          isPlanned: isPlanned,
+          date: date
+        };
+        if (currentExpenseReceipt) {
+          splitTx.receipt = JSON.parse(JSON.stringify(currentExpenseReceipt));
+        }
+        appState.transactions.push(splitTx);
+      });
+      announceNVDA(`Ausgabe ${category} über ${formatCurrency(amount)} aufgeteilt auf ${splitRowsValid.length} Konten ${isPlanned ? 'geplant' : 'gebucht'}!`);
+    } else {
+      // Auto-Deckung (wie bei PayPal):
+      // REGEL: Nur belasten, wenn auf dem Primärkonto wirklich nicht genug Geld vorhanden ist!
+      const chosenAcc = (appState.accounts || []).find(a => a.id === account);
+      let autoCoverMsg = '';
+      if (chosenAcc && chosenAcc.hasBackupAccount && chosenAcc.backupAccountId && !isPlanned) {
+        const balancesBefore = calculateBalancesUpToDate(date);
+        const curAvail = balancesBefore[account] !== undefined ? balancesBefore[account] : 0;
+        if (curAvail < amount) {
+          const shortfall = Math.round((amount - Math.max(0, curAvail)) * 100) / 100;
+          if (shortfall > 0) {
+            const backupAcc = (appState.accounts || []).find(a => a.id === chosenAcc.backupAccountId);
+            if (backupAcc) {
+              appState.transactions.push({
+                id: `tx_cov_${Date.now()}`,
+                type: 'transfer',
+                fromAccount: backupAcc.id,
+                toAccount: account,
+                amount: shortfall,
+                date: date,
+                description: `Automatische Deckung für ${category} (${chosenAcc.name} hatte nur ${formatCurrency(Math.max(0, curAvail))})`
+              });
+              autoCoverMsg = ` (davon ${formatCurrency(shortfall)} automatisch über ${backupAcc.name} gedeckt)`;
+            }
+          }
+        }
+      }
+
+      const newTx = {
+        id: `tx_${Date.now()}`,
+        type: 'expense',
+        account: account,
+        amount: amount,
+        category: category,
+        subcategory: subcategory,
+        description: desc,
+        isPlanned: isPlanned,
+        date: date
+      };
+      if (currentExpenseReceipt) {
+        newTx.receipt = JSON.parse(JSON.stringify(currentExpenseReceipt));
+      }
+      appState.transactions.push(newTx);
+      announceNVDA(`Ausgabe ${category} über ${formatCurrency(amount)} ${isPlanned ? 'geplant' : 'gebucht'}${autoCoverMsg}!`);
+    }
   }
 
   await saveStateToEncryptedStorage();
   document.getElementById('form-add-expense').reset();
   document.getElementById('exp-date').value = new Date().toISOString().split('T')[0];
+  const splitToggleReset = document.getElementById('exp-split-toggle');
+  if (splitToggleReset && splitToggleReset.checked) {
+    splitToggleReset.checked = false;
+    toggleExpenseSplitPayment();
+  }
+  const trialReset = document.getElementById('exp-rec-trial-toggle');
+  if (trialReset && trialReset.checked) {
+    trialReset.checked = false;
+    toggleTrialSection('exp');
+  }
+  const discountReset = document.getElementById('exp-rec-discount-toggle');
+  if (discountReset && discountReset.checked) {
+    discountReset.checked = false;
+    toggleDiscountSection('exp');
+  }
+  const contractReset = document.getElementById('exp-rec-contract-toggle');
+  if (contractReset && contractReset.checked) {
+    contractReset.checked = false;
+    toggleContractSection('exp');
+  }
+  currentExpenseReceipt = null;
+  renderReceiptPreview('exp');
   toggleExpenseFrequencyFields();
   updateOverview();
   switchView('overview');
+}
+
+// ----------------------------------------------------------------------------
+// OPTIONALE SPLIT-EINZAHLUNG FÜR EINNAHMEN
+// ----------------------------------------------------------------------------
+let incomeSplitRows = [];
+
+function getIncomeSplitAccountOptionsHtml(selectedAccId) {
+  ensureAccountsInitialized();
+  return appState.accounts.map(acc => {
+    const icon = acc.icon || ACCOUNT_TYPE_ICONS[acc.type] || '💳';
+    const sel = (acc.id === selectedAccId) ? 'selected' : '';
+    return `<option value="${escapeHTML(acc.id)}" ${sel}>${escapeHTML(acc.name)}</option>`;
+  }).join('');
+}
+
+function toggleIncomeSplitPayment() {
+  const toggle = document.getElementById('inc-split-toggle');
+  const splitSec = document.getElementById('inc-split-section');
+  const accGroup = document.getElementById('inc-account-group');
+  const singleAcc = document.getElementById('inc-account');
+  const isSplit = toggle && toggle.checked;
+
+  if (splitSec) splitSec.style.display = isSplit ? 'block' : 'none';
+  if (accGroup) accGroup.style.display = isSplit ? 'none' : 'block';
+  if (singleAcc) singleAcc.required = !isSplit;
+
+  if (isSplit) {
+    if (!incomeSplitRows || incomeSplitRows.length === 0) {
+      initIncomeSplitRows();
+    } else {
+      renderIncomeSplitRows();
+    }
+    if (typeof announceNVDA === 'function') {
+      announceNVDA('Split-Einzahlung aktiviert. Du kannst den Betrag nun auf mehrere Konten aufteilen.');
+    }
+  } else {
+    if (typeof announceNVDA === 'function') {
+      announceNVDA('Split-Einzahlung deaktiviert. Einfache Kontoauswahl wieder aktiv.');
+    }
+  }
+}
+
+function initIncomeSplitRows() {
+  ensureAccountsInitialized();
+  const totalAmt = parseFloat(document.getElementById('inc-amount').value) || 0;
+  const acc1 = appState.accounts[0] ? appState.accounts[0].id : 'bank';
+  const acc2 = appState.accounts[1] ? appState.accounts[1].id : (appState.accounts[0] ? appState.accounts[0].id : 'cash');
+
+  const half = Math.round((totalAmt / 2) * 100) / 100;
+  const rest = Math.round((totalAmt - half) * 100) / 100;
+
+  incomeSplitRows = [
+    { account: acc1, amount: half > 0 ? half : '' },
+    { account: acc2, amount: rest > 0 ? rest : '' }
+  ];
+  renderIncomeSplitRows();
+}
+
+function renderIncomeSplitRows() {
+  const container = document.getElementById('inc-split-rows-container');
+  if (!container) return;
+
+  container.innerHTML = incomeSplitRows.map((row, idx) => {
+    const canRemove = incomeSplitRows.length > 2;
+    return `
+      <div class="split-row" data-index="${idx}" style="display: flex; gap: 8px; align-items: flex-end; background: #fff; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border-color, #ccc); flex-wrap: wrap;">
+        <div style="flex: 2; min-width: 160px;">
+          <label for="inc-split-acc-${idx}" class="field-label" style="font-size: 13px; margin-bottom: 2px;">
+            <strong>Ziel-Konto ${idx + 1}:</strong>
+          </label>
+          <select id="inc-split-acc-${idx}" class="large-select" onchange="onIncomeSplitAccountChange(${idx}, this.value)">
+            ${getIncomeSplitAccountOptionsHtml(row.account)}
+          </select>
+        </div>
+        <div style="flex: 1; min-width: 120px;">
+          <label for="inc-split-amt-${idx}" class="field-label" style="font-size: 13px; margin-bottom: 2px;">
+            <strong>Teilbetrag (€):</strong>
+          </label>
+          <input type="number" step="0.01" min="0.01" id="inc-split-amt-${idx}" class="large-input" value="${row.amount !== '' ? row.amount : ''}" placeholder="0,00" oninput="onIncomeSplitAmountInput(${idx}, this.value)">
+        </div>
+        ${canRemove ? `
+          <button type="button" class="btn btn-secondary" onclick="removeIncomeSplitRow(${idx})" style="padding: 10px 12px; margin-bottom: 2px; color: #D32F2F;" aria-label="Ziel-Konto ${idx + 1} entfernen">
+            🗑️
+          </button>
+        ` : ''}
+      </div>
+    `;
+  }).join('');
+
+  updateIncomeSplitSummary();
+}
+
+function addIncomeSplitRow() {
+  ensureAccountsInitialized();
+  const totalAmt = parseFloat(document.getElementById('inc-amount').value) || 0;
+  const currentSum = incomeSplitRows.reduce((sum, r) => sum + (parseFloat(r.amount) || 0), 0);
+  const diff = Math.max(0, Math.round((totalAmt - currentSum) * 100) / 100);
+
+  const usedAccs = incomeSplitRows.map(r => r.account);
+  const unusedAcc = appState.accounts.find(a => !usedAccs.includes(a.id));
+  const newAccId = unusedAcc ? unusedAcc.id : (appState.accounts[0] ? appState.accounts[0].id : 'bank');
+
+  incomeSplitRows.push({
+    account: newAccId,
+    amount: diff > 0 ? diff : ''
+  });
+
+  renderIncomeSplitRows();
+  if (typeof announceNVDA === 'function') {
+    announceNVDA(`Ziel-Konto ${incomeSplitRows.length} hinzugefügt.`);
+  }
+}
+
+function removeIncomeSplitRow(idx) {
+  if (incomeSplitRows.length <= 2) return;
+  incomeSplitRows.splice(idx, 1);
+  renderIncomeSplitRows();
+  if (typeof announceNVDA === 'function') {
+    announceNVDA(`Konto entfernt. Verbleibend: ${incomeSplitRows.length} Konten.`);
+  }
+}
+
+function onIncomeSplitAccountChange(idx, newAcc) {
+  if (incomeSplitRows[idx]) {
+    incomeSplitRows[idx].account = newAcc;
+  }
+}
+
+function onIncomeSplitAmountInput(idx, val) {
+  const amt = parseFloat(val);
+  if (incomeSplitRows[idx]) {
+    incomeSplitRows[idx].amount = isNaN(amt) ? '' : amt;
+  }
+
+  const totalAmt = parseFloat(document.getElementById('inc-amount').value) || 0;
+  if (incomeSplitRows.length === 2 && idx === 0 && !isNaN(amt) && totalAmt > amt) {
+    const remainder = Math.round((totalAmt - amt) * 100) / 100;
+    incomeSplitRows[1].amount = remainder;
+    const secondInput = document.getElementById('inc-split-amt-1');
+    if (secondInput) secondInput.value = remainder;
+  }
+
+  updateIncomeSplitSummary();
+}
+
+function updateIncomeSplitSummary() {
+  const summaryEl = document.getElementById('inc-split-summary');
+  if (!summaryEl) return;
+
+  const totalAmt = parseFloat(document.getElementById('inc-amount').value) || 0;
+  const currentSum = incomeSplitRows.reduce((sum, r) => sum + (parseFloat(r.amount) || 0), 0);
+  const diff = Math.round((totalAmt - currentSum) * 100) / 100;
+
+  if (Math.abs(diff) < 0.005 && totalAmt > 0) {
+    summaryEl.style.borderColor = '#2E7D32';
+    summaryEl.style.color = '#1B5E20';
+    summaryEl.style.background = 'rgba(76, 175, 80, 0.1)';
+    summaryEl.innerHTML = `🟢 <strong>Vollständig aufgeteilt:</strong> ${formatCurrency(currentSum)} von ${formatCurrency(totalAmt)} (Rest: 0,00 €)`;
+  } else if (diff > 0) {
+    summaryEl.style.borderColor = '#F57C00';
+    summaryEl.style.color = '#E65100';
+    summaryEl.style.background = 'rgba(255, 152, 0, 0.1)';
+    summaryEl.innerHTML = `🟡 <strong>Aufgeteilt:</strong> ${formatCurrency(currentSum)} von ${formatCurrency(totalAmt)} (Noch offen: ${formatCurrency(diff)})`;
+  } else {
+    summaryEl.style.borderColor = '#D32F2F';
+    summaryEl.style.color = '#B71C1C';
+    summaryEl.style.background = 'rgba(244, 67, 54, 0.1)';
+    summaryEl.innerHTML = `🔴 <strong>Überhang:</strong> ${formatCurrency(currentSum)} von ${formatCurrency(totalAmt)} (${formatCurrency(Math.abs(diff))} zu viel)`;
+  }
 }
 
 async function handleAddIncome(e) {
   e.preventDefault();
   const amount = parseFloat(document.getElementById('inc-amount').value);
   const freq = document.getElementById('inc-frequency').value;
-  const account = document.getElementById('inc-account').value;
+  const account = document.getElementById('inc-account') ? document.getElementById('inc-account').value : 'bank';
   const category = document.getElementById('inc-category').value;
   const subcategory = document.getElementById('inc-subcategory') ? document.getElementById('inc-subcategory').value : '';
   const date = document.getElementById('inc-date').value;
@@ -4256,44 +5758,147 @@ async function handleAddIncome(e) {
   const isFuture = date > todayStr;
   const isPlanned = (freq === 'planned') || isFuture;
 
+  // Split-Einzahlung prüfen
+  const splitToggle = document.getElementById('inc-split-toggle');
+  const isSplit = splitToggle && splitToggle.checked;
+  let splitRowsValid = [];
+
+  if (isSplit) {
+    splitRowsValid = incomeSplitRows.filter(r => r.account && parseFloat(r.amount) > 0);
+    if (splitRowsValid.length < 2) {
+      if (typeof announceNVDA === 'function') announceNVDA('Fehler: Für eine Split-Einzahlung müssen mindestens 2 Konten mit Beträgen angegeben werden.', true);
+      alert('⚠️ Bitte gib mindestens 2 Konten mit Beträgen für die Aufteilung der Einnahme an.');
+      return;
+    }
+    const splitSum = Math.round(splitRowsValid.reduce((sum, r) => sum + parseFloat(r.amount), 0) * 100) / 100;
+    const expectedTotal = Math.round(amount * 100) / 100;
+    if (Math.abs(splitSum - expectedTotal) > 0.01) {
+      if (typeof announceNVDA === 'function') announceNVDA(`Fehler: Die Summe der Konten (${formatCurrency(splitSum)}) stimmt nicht mit dem Gesamteinnahmebetrag (${formatCurrency(expectedTotal)}) überein. Differenz: ${formatCurrency(Math.abs(splitSum - expectedTotal))}`, true);
+      alert(`⚠️ Die Summe der aufgeteilten Konten (${formatCurrency(splitSum)}) stimmt nicht mit dem Gesamteinnahmebetrag (${formatCurrency(expectedTotal)}) überein!\n\nDifferenz: ${formatCurrency(Math.abs(splitSum - expectedTotal))}`);
+      return;
+    }
+  }
+
   if (['weekly', 'monthly', 'quarterly', 'halfyear', 'yearly'].includes(freq)) {
     const day = parseInt(document.getElementById('inc-rec-day').value, 10) || 1;
     const weekday = document.getElementById('inc-rec-weekday') ? parseInt(document.getElementById('inc-rec-weekday').value, 10) : 5;
     
-    appState.recurring.push({
-      id: `rec_${Date.now()}`,
-      type: 'income',
-      account: account,
-      amount: amount,
-      category: category,
-      subcategory: subcategory,
-      name: desc || (subcategory ? `${category} (${subcategory})` : category),
-      interval: freq,
-      day: day,
-      weekday: weekday,
-      startYear: selectedYear,
-      startMonth: selectedMonth,
-      active: true
-    });
-    announceNVDA(`Dauerhafte Einnahme ${category} über ${formatCurrency(amount)} gespeichert!`);
+    let recStartYear = selectedYear;
+    let recStartMonth = selectedMonth;
+    const incStartMonthEl = document.getElementById('inc-start-month');
+    if (incStartMonthEl && incStartMonthEl.value && incStartMonthEl.value.includes('-')) {
+      const parts = incStartMonthEl.value.split('-');
+      recStartYear = parseInt(parts[0], 10);
+      recStartMonth = parseInt(parts[1], 10) - 1;
+    }
+
+    if (isSplit) {
+      const splitId = `split_rec_inc_${Date.now()}`;
+      splitRowsValid.forEach((row, idx) => {
+        const rowAmt = parseFloat(row.amount);
+        const accName = formatAccountName(row.account);
+        const partText = `(Split ${idx + 1}/${splitRowsValid.length}: ${formatCurrency(rowAmt)} auf ${accName})`;
+        const recName = desc ? `${desc} ${partText}` : `${category} ${partText}`;
+
+        appState.recurring.push({
+          id: `rec_${Date.now()}_${idx}`,
+          splitId: splitId,
+          splitIndex: idx + 1,
+          splitTotalCount: splitRowsValid.length,
+          splitTotalAmount: amount,
+          type: 'income',
+          account: row.account,
+          amount: rowAmt,
+          category: category,
+          subcategory: subcategory,
+          name: recName,
+          interval: freq,
+          day: day,
+          weekday: weekday,
+          startYear: recStartYear,
+          startMonth: recStartMonth,
+          active: true
+        });
+      });
+      announceNVDA(`Dauerhafte Einnahme ${category} über ${formatCurrency(amount)} aufgeteilt auf ${splitRowsValid.length} Konten gespeichert!`);
+    } else {
+      appState.recurring.push({
+        id: `rec_${Date.now()}`,
+        type: 'income',
+        account: account,
+        amount: amount,
+        category: category,
+        subcategory: subcategory,
+        name: desc || (subcategory ? `${category} (${subcategory})` : category),
+        interval: freq,
+        day: day,
+        weekday: weekday,
+        startYear: recStartYear,
+        startMonth: recStartMonth,
+        active: true
+      });
+      announceNVDA(`Dauerhafte Einnahme ${category} über ${formatCurrency(amount)} gespeichert!`);
+    }
   } else {
-    appState.transactions.push({
-      id: `tx_${Date.now()}`,
-      type: 'income',
-      account: account,
-      amount: amount,
-      category: category,
-      subcategory: subcategory,
-      description: desc,
-      isPlanned: isPlanned,
-      date: date
-    });
-    announceNVDA(`Einnahme ${category} über ${formatCurrency(amount)} ${isPlanned ? 'geplant' : 'gebucht'}!`);
+    if (isSplit) {
+      const splitId = `split_inc_${Date.now()}`;
+      splitRowsValid.forEach((row, idx) => {
+        const rowAmt = parseFloat(row.amount);
+        const accName = formatAccountName(row.account);
+        const partText = `(Split ${idx + 1}/${splitRowsValid.length}: ${formatCurrency(rowAmt)} auf ${accName})`;
+        const finalDesc = desc ? `${desc} ${partText}` : `Split-Einzahlung ${partText}`;
+
+        const splitTx = {
+          id: `tx_${Date.now()}_${idx}`,
+          splitId: splitId,
+          splitIndex: idx + 1,
+          splitTotalCount: splitRowsValid.length,
+          splitTotalAmount: amount,
+          type: 'income',
+          account: row.account,
+          amount: rowAmt,
+          category: category,
+          subcategory: subcategory,
+          description: finalDesc,
+          isPlanned: isPlanned,
+          date: date
+        };
+        if (currentIncomeReceipt) {
+          splitTx.receipt = JSON.parse(JSON.stringify(currentIncomeReceipt));
+        }
+        appState.transactions.push(splitTx);
+      });
+      announceNVDA(`Einnahme ${category} über ${formatCurrency(amount)} aufgeteilt auf ${splitRowsValid.length} Konten ${isPlanned ? 'geplant' : 'gebucht'}!`);
+    } else {
+      const newTx = {
+        id: `tx_${Date.now()}`,
+        type: 'income',
+        account: account,
+        amount: amount,
+        category: category,
+        subcategory: subcategory,
+        description: desc,
+        isPlanned: isPlanned,
+        date: date
+      };
+      if (currentIncomeReceipt) {
+        newTx.receipt = JSON.parse(JSON.stringify(currentIncomeReceipt));
+      }
+      appState.transactions.push(newTx);
+      announceNVDA(`Einnahme ${category} über ${formatCurrency(amount)} ${isPlanned ? 'geplant' : 'gebucht'}!`);
+    }
   }
 
   await saveStateToEncryptedStorage();
   document.getElementById('form-add-income').reset();
   document.getElementById('inc-date').value = new Date().toISOString().split('T')[0];
+  const splitToggleReset = document.getElementById('inc-split-toggle');
+  if (splitToggleReset && splitToggleReset.checked) {
+    splitToggleReset.checked = false;
+    toggleIncomeSplitPayment();
+  }
+  currentIncomeReceipt = null;
+  renderReceiptPreview('inc');
   toggleIncomeFrequencyFields();
   updateOverview();
   switchView('overview');
@@ -4352,6 +5957,15 @@ async function handleAddTransfer(e) {
     const day = parseInt(document.getElementById('trf-rec-day').value, 10) || 1;
     const weekday = document.getElementById('trf-rec-weekday') ? parseInt(document.getElementById('trf-rec-weekday').value, 10) : 5;
     
+    let recStartYear = curDate.getFullYear();
+    let recStartMonth = curDate.getMonth();
+    const trfStartMonthEl = document.getElementById('trf-start-month');
+    if (trfStartMonthEl && trfStartMonthEl.value && trfStartMonthEl.value.includes('-')) {
+      const parts = trfStartMonthEl.value.split('-');
+      recStartYear = parseInt(parts[0], 10);
+      recStartMonth = parseInt(parts[1], 10) - 1;
+    }
+
     appState.recurring.push({
       id: `rec_${Date.now()}`,
       type: 'transfer',
@@ -4363,8 +5977,8 @@ async function handleAddTransfer(e) {
       interval: freq,
       day: day,
       weekday: weekday,
-      startYear: curDate.getFullYear(),
-      startMonth: curDate.getMonth(),
+      startYear: recStartYear,
+      startMonth: recStartMonth,
       targetPotId: toPotId || '',
       sourcePotId: fromPotId || '',
       active: true
@@ -4527,6 +6141,9 @@ function openEditModal(txId) {
 
   document.getElementById('edit-tx-desc').value = tx.description || '';
 
+  currentEditReceipt = tx.receipt ? JSON.parse(JSON.stringify(tx.receipt)) : null;
+  renderReceiptPreview('edit');
+
   const modal = document.getElementById('edit-tx-modal');
   modal.style.display = 'flex';
   document.getElementById('edit-tx-amount').focus();
@@ -4534,6 +6151,8 @@ function openEditModal(txId) {
 }
 
 function closeEditModal() {
+  currentEditReceipt = null;
+  renderReceiptPreview('edit');
   const modal = document.getElementById('edit-tx-modal');
   if (modal) modal.style.display = 'none';
 }
@@ -4571,6 +6190,14 @@ async function saveEditedTransaction(e) {
   }
 
   tx.description = document.getElementById('edit-tx-desc').value.trim();
+
+  if (currentEditReceipt) {
+    tx.receipt = currentEditReceipt;
+  } else {
+    delete tx.receipt;
+  }
+  currentEditReceipt = null;
+  renderReceiptPreview('edit');
 
   await saveStateToEncryptedStorage();
   closeEditModal();
@@ -4674,6 +6301,12 @@ function openEditRecModal(recId) {
   if (document.getElementById('edit-rec-weekday')) document.getElementById('edit-rec-weekday').value = rec.weekday !== undefined ? rec.weekday : 5;
   if (document.getElementById('edit-rec-yearly-month')) document.getElementById('edit-rec-yearly-month').value = rec.yearlyMonth !== undefined ? rec.yearlyMonth : 0;
 
+  const sy = rec.startYear !== undefined ? rec.startYear : new Date().getFullYear();
+  const sm = rec.startMonth !== undefined ? rec.startMonth : new Date().getMonth();
+  const smStr = String(sm + 1).padStart(2, '0');
+  const editStartMonth = document.getElementById('edit-rec-start-month');
+  if (editStartMonth) editStartMonth.value = `${sy}-${smStr}`;
+
   if (rec.type === 'transfer') {
     document.getElementById('edit-rec-from').value = rec.fromAccount || 'bank';
     document.getElementById('edit-rec-to').value = rec.toAccount || 'savings';
@@ -4686,6 +6319,80 @@ function openEditRecModal(recId) {
 
   if (rec.type !== 'transfer') {
     populateEditRecCategories(rec.type, rec.category, rec.subcategory);
+  }
+
+  // Vertrags-, Testphasen- & Pausenfelder vorbefüllen
+  const futureToggle = document.getElementById('edit-rec-future-price-toggle');
+  if (futureToggle) {
+    futureToggle.checked = !!rec.futurePriceActive;
+    toggleEditFuturePriceSection();
+    if (rec.futurePriceActive) {
+      document.getElementById('edit-rec-future-amount').value = rec.futureAmount || '';
+      if (rec.futureStartYear !== undefined && rec.futureStartMonth !== undefined) {
+        document.getElementById('edit-rec-future-month').value = `${rec.futureStartYear}-${String(rec.futureStartMonth + 1).padStart(2, '0')}`;
+      }
+    }
+  }
+
+  const pauseToggle = document.getElementById('edit-rec-pause-toggle');
+  if (pauseToggle) {
+    pauseToggle.checked = !!rec.pauseActive;
+    toggleEditPauseSection();
+    if (rec.pauseActive) {
+      if (rec.pauseStartYear !== undefined && rec.pauseStartMonth !== undefined) {
+        document.getElementById('edit-rec-pause-start-month').value = `${rec.pauseStartYear}-${String(rec.pauseStartMonth + 1).padStart(2, '0')}`;
+      }
+      if (rec.pauseEndYear !== undefined && rec.pauseEndMonth !== undefined) {
+        document.getElementById('edit-rec-pause-end-month').value = `${rec.pauseEndYear}-${String(rec.pauseEndMonth + 1).padStart(2, '0')}`;
+      }
+    }
+  }
+
+  const trialToggle = document.getElementById('edit-rec-trial-toggle');
+  if (trialToggle) {
+    trialToggle.checked = !!rec.trialActive;
+    toggleTrialSection('edit-rec');
+    if (rec.trialActive) {
+      document.getElementById('edit-rec-trial-unit').value = rec.trialUnit || 'days';
+      document.getElementById('edit-rec-trial-duration').value = rec.trialDuration || 14;
+      document.getElementById('edit-rec-trial-end').value = rec.trialEndDate || '';
+    }
+  }
+
+  const discToggle = document.getElementById('edit-rec-discount-toggle');
+  if (discToggle) {
+    discToggle.checked = !!rec.discountActive;
+    toggleDiscountSection('edit-rec');
+    if (rec.discountActive) {
+      document.getElementById('edit-rec-discount-amount').value = rec.discountAmount || '';
+      if (rec.discountEndYear !== undefined && rec.discountEndMonth !== undefined) {
+        document.getElementById('edit-rec-discount-end-month').value = `${rec.discountEndYear}-${String(rec.discountEndMonth + 1).padStart(2, '0')}`;
+      }
+      document.getElementById('edit-rec-discount-regular').value = rec.regularAmount || rec.amount || '';
+    }
+  }
+
+  const contractToggle = document.getElementById('edit-rec-contract-toggle');
+  if (contractToggle) {
+    contractToggle.checked = !!rec.hasContractDetails;
+    toggleContractSection('edit-rec');
+    if (rec.hasContractDetails) {
+      document.getElementById('edit-rec-contract-number').value = rec.contractNumber || '';
+      document.getElementById('edit-rec-min-term').value = rec.minTermDate || '';
+      document.getElementById('edit-rec-notice-period').value = rec.noticePeriod || '';
+      document.getElementById('edit-rec-hotline').value = rec.hotline || '';
+      document.getElementById('edit-rec-notes').value = rec.contractNotes || '';
+    }
+  }
+
+  const endToggle = document.getElementById('edit-rec-end-toggle');
+  if (endToggle) {
+    const hasEnd = rec.endYear !== undefined && rec.endMonth !== undefined;
+    endToggle.checked = hasEnd;
+    toggleEditEndSection();
+    if (hasEnd) {
+      document.getElementById('edit-rec-end-month').value = `${rec.endYear}-${String(rec.endMonth + 1).padStart(2, '0')}`;
+    }
   }
 
   const modal = document.getElementById('edit-rec-modal');
@@ -4714,6 +6421,100 @@ async function saveEditedRecurring(e) {
   rec.day = parseInt(document.getElementById('edit-rec-day').value, 10) || 1;
   rec.weekday = parseInt(document.getElementById('edit-rec-weekday').value, 10) || 5;
   rec.yearlyMonth = parseInt(document.getElementById('edit-rec-yearly-month').value, 10) || 0;
+
+  const editStartMonth = document.getElementById('edit-rec-start-month');
+  if (editStartMonth && editStartMonth.value && editStartMonth.value.includes('-')) {
+    const parts = editStartMonth.value.split('-');
+    rec.startYear = parseInt(parts[0], 10);
+    rec.startMonth = parseInt(parts[1], 10) - 1;
+  }
+
+  // Preiserhöhung
+  const futureToggle = document.getElementById('edit-rec-future-price-toggle');
+  if (futureToggle && futureToggle.checked) {
+    rec.futurePriceActive = true;
+    rec.futureAmount = parseFloat(document.getElementById('edit-rec-future-amount').value) || rec.amount;
+    const fVal = document.getElementById('edit-rec-future-month').value;
+    if (fVal && fVal.includes('-')) {
+      const parts = fVal.split('-');
+      rec.futureStartYear = parseInt(parts[0], 10);
+      rec.futureStartMonth = parseInt(parts[1], 10) - 1;
+    }
+  } else {
+    rec.futurePriceActive = false;
+  }
+
+  // Pausieren
+  const pauseToggle = document.getElementById('edit-rec-pause-toggle');
+  if (pauseToggle && pauseToggle.checked) {
+    rec.pauseActive = true;
+    const psVal = document.getElementById('edit-rec-pause-start-month').value;
+    const peVal = document.getElementById('edit-rec-pause-end-month').value;
+    if (psVal && psVal.includes('-') && peVal && peVal.includes('-')) {
+      const [psy, psm] = psVal.split('-');
+      const [pey, pem] = peVal.split('-');
+      rec.pauseStartYear = parseInt(psy, 10);
+      rec.pauseStartMonth = parseInt(psm, 10) - 1;
+      rec.pauseEndYear = parseInt(pey, 10);
+      rec.pauseEndMonth = parseInt(pem, 10) - 1;
+    }
+  } else {
+    rec.pauseActive = false;
+  }
+
+  // Gratis-Phase
+  const trialToggle = document.getElementById('edit-rec-trial-toggle');
+  if (trialToggle && trialToggle.checked) {
+    rec.trialActive = true;
+    rec.trialUnit = document.getElementById('edit-rec-trial-unit').value || 'days';
+    rec.trialDuration = parseInt(document.getElementById('edit-rec-trial-duration').value, 10) || 14;
+    rec.trialEndDate = document.getElementById('edit-rec-trial-end').value || '';
+  } else {
+    rec.trialActive = false;
+  }
+
+  // Rabatt-Phase
+  const discToggle = document.getElementById('edit-rec-discount-toggle');
+  if (discToggle && discToggle.checked) {
+    rec.discountActive = true;
+    rec.discountAmount = parseFloat(document.getElementById('edit-rec-discount-amount').value) || 0;
+    const deVal = document.getElementById('edit-rec-discount-end-month').value;
+    if (deVal && deVal.includes('-')) {
+      const [dey, dem] = deVal.split('-');
+      rec.discountEndYear = parseInt(dey, 10);
+      rec.discountEndMonth = parseInt(dem, 10) - 1;
+    }
+    rec.regularAmount = parseFloat(document.getElementById('edit-rec-discount-regular').value) || rec.amount;
+  } else {
+    rec.discountActive = false;
+  }
+
+  // Vertragsdaten
+  const contractToggle = document.getElementById('edit-rec-contract-toggle');
+  if (contractToggle && contractToggle.checked) {
+    rec.hasContractDetails = true;
+    rec.contractNumber = (document.getElementById('edit-rec-contract-number').value || '').trim();
+    rec.minTermDate = document.getElementById('edit-rec-min-term').value || '';
+    rec.noticePeriod = (document.getElementById('edit-rec-notice-period').value || '').trim();
+    rec.hotline = (document.getElementById('edit-rec-hotline').value || '').trim();
+    rec.contractNotes = (document.getElementById('edit-rec-notes').value || '').trim();
+  } else {
+    rec.hasContractDetails = false;
+  }
+
+  // Beenden / Auslaufen
+  const endToggle = document.getElementById('edit-rec-end-toggle');
+  if (endToggle && endToggle.checked) {
+    const endVal = document.getElementById('edit-rec-end-month').value;
+    if (endVal && endVal.includes('-')) {
+      const [ey, em] = endVal.split('-');
+      rec.endYear = parseInt(ey, 10);
+      rec.endMonth = parseInt(em, 10) - 1;
+    }
+  } else {
+    rec.endYear = undefined;
+    rec.endMonth = undefined;
+  }
 
   if (type === 'transfer') {
     rec.fromAccount = document.getElementById('edit-rec-from').value;
@@ -4748,78 +6549,825 @@ async function deleteRecurring(recId) {
 }
 
 // ----------------------------------------------------------------------------
-// 13. KAUF-PLANER & SIMULATOR
+// 12b. BELEG- & QUITTUNGS-VERWALTUNG, SMART OCR & BETRACHTER (v6.7.0)
 // ----------------------------------------------------------------------------
-let currentSimulatedPurchase = null;
+let currentExpenseReceipt = null;
+let currentIncomeReceipt = null;
+let currentEditReceipt = null;
+let viewerActiveTxId = null;
+let viewerActiveFormType = null;
+let viewerReceipt = null;
+let viewerZoom = 1.0;
+let viewerRotation = 0;
+let tesseractLoadingPromise = null;
 
-function runPurchaseSimulation() {
-  const priceInput = document.getElementById('sim-item-price');
-  const nameInput = document.getElementById('sim-item-name');
-  const resultBox = document.getElementById('sim-result-box');
-  const actionBox = document.getElementById('sim-save-action');
-  if (!priceInput || !resultBox) return;
+async function compressReceiptFile(file) {
+  const isPdf = file.type === 'application/pdf' || (file.name && file.name.toLowerCase().endsWith('.pdf'));
+  if (isPdf) {
+    if (file.size > 5 * 1024 * 1024) {
+      throw new Error('PDF-Datei ist größer als 5 MB. Bitte wähle eine kleinere Datei.');
+    }
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({
+        name: file.name,
+        type: 'application/pdf',
+        data: reader.result,
+        size: file.size,
+        createdAt: new Date().toISOString()
+      });
+      reader.onerror = () => reject(new Error('Fehler beim Lesen der PDF-Datei.'));
+      reader.readAsDataURL(file);
+    });
+  }
 
-  const rawVal = priceInput.value.trim();
-  if (!rawVal) {
-    resultBox.innerHTML = '<p>💡 <em>Gib oben einen Preis ein, um zu sehen, was nach dem Kauf von deinem Monatsgeld noch übrig bleibt.</em></p>';
-    if (actionBox) actionBox.style.display = 'none';
-    currentSimulatedPurchase = null;
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+        const maxDim = 1400;
+
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+
+        const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.82);
+        const approxSize = Math.round((compressedDataUrl.length * 3) / 4);
+
+        resolve({
+          name: (file.name || 'beleg').replace(/\.[^/.]+$/, "") + ".jpg",
+          type: 'image/jpeg',
+          data: compressedDataUrl,
+          size: approxSize,
+          createdAt: new Date().toISOString(),
+          originalWidth: img.width,
+          originalHeight: img.height
+        });
+      };
+      img.onerror = () => reject(new Error('Das Bild konnte nicht geladen werden.'));
+      img.src = e.target.result;
+    };
+    reader.onerror = () => reject(new Error('Fehler beim Lesen der Bilddatei.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadTesseractScript() {
+  if (typeof Tesseract !== 'undefined') return Promise.resolve();
+  if (tesseractLoadingPromise) return tesseractLoadingPromise;
+  tesseractLoadingPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Tesseract konnte nicht geladen werden'));
+    document.head.appendChild(script);
+  });
+  return tesseractLoadingPromise;
+}
+
+function extractTextFromPdfDataUrl(dataUrl) {
+  try {
+    const base64 = dataUrl.split(',')[1];
+    if (!base64) return '';
+    const binary = atob(base64);
+
+    let text = '';
+    const tjRegex = /\(([^)]+)\)\s*Tj/g;
+    let match;
+    while ((match = tjRegex.exec(binary)) !== null) {
+      text += ' ' + match[1];
+    }
+    const tjArrayRegex = /\[([^\]]+)\]\s*TJ/g;
+    while ((match = tjArrayRegex.exec(binary)) !== null) {
+      const inner = match[1];
+      const partRegex = /\(([^)]+)\)/g;
+      let pMatch;
+      while ((pMatch = partRegex.exec(inner)) !== null) {
+        text += pMatch[1];
+      }
+      text += ' ';
+    }
+    return text.trim();
+  } catch (e) {
+    return '';
+  }
+}
+
+async function extractTextFromReceipt(receiptObj) {
+  let recognizedText = '';
+  let barcodeData = null;
+
+  // 1. BarcodeDetector für QR Codes / GiroCode / EPC QR
+  if ('BarcodeDetector' in window && receiptObj.type.startsWith('image/')) {
+    try {
+      const detector = new BarcodeDetector({ formats: ['qr_code', 'data_matrix', 'code_128', 'ean_13'] });
+      const img = new Image();
+      img.src = receiptObj.data;
+      await new Promise(r => { img.onload = r; img.onerror = r; });
+      const barcodes = await detector.detect(img);
+      if (barcodes && barcodes.length > 0) {
+        barcodeData = barcodes[0].rawValue;
+        recognizedText += '\n' + barcodeData;
+      }
+    } catch (e) {
+      console.warn('BarcodeDetector fallback:', e);
+    }
+  }
+
+  // 2. Chromium / Android ShapeDetection TextDetector
+  if ('TextDetector' in window && receiptObj.type.startsWith('image/')) {
+    try {
+      const detector = new TextDetector();
+      const img = new Image();
+      img.src = receiptObj.data;
+      await new Promise(r => { img.onload = r; img.onerror = r; });
+      const detectedTexts = await detector.detect(img);
+      if (detectedTexts && detectedTexts.length > 0) {
+        const fullOcr = detectedTexts.map(t => t.rawValue).join('\n');
+        recognizedText += '\n' + fullOcr;
+      }
+    } catch (e) {
+      console.warn('TextDetector fallback:', e);
+    }
+  }
+
+  // 3. PDF Textextraktion
+  if (receiptObj.type === 'application/pdf' && receiptObj.data) {
+    try {
+      const pdfText = extractTextFromPdfDataUrl(receiptObj.data);
+      if (pdfText) recognizedText += '\n' + pdfText;
+    } catch (e) {
+      console.warn('PDF text extraction fallback:', e);
+    }
+  }
+
+  // 4. Fallback zu Tesseract OCR (falls online und Text noch leer)
+  if (!recognizedText.trim() && receiptObj.type.startsWith('image/')) {
+    if (typeof Tesseract !== 'undefined') {
+      try {
+        const res = await Tesseract.recognize(receiptObj.data, 'deu+eng');
+        if (res && res.data && res.data.text) {
+          recognizedText += '\n' + res.data.text;
+        }
+      } catch (e) {
+        console.warn('Tesseract OCR fallback:', e);
+      }
+    } else if (navigator.onLine) {
+      try {
+        await loadTesseractScript();
+        if (typeof Tesseract !== 'undefined') {
+          const res = await Tesseract.recognize(receiptObj.data, 'deu+eng');
+          if (res && res.data && res.data.text) {
+            recognizedText += '\n' + res.data.text;
+          }
+        }
+      } catch (e) {
+        console.warn('Dynamic Tesseract fallback:', e);
+      }
+    }
+  }
+
+  // 5. Dateiname als Signal hinzufügen
+  if (receiptObj.name) {
+    recognizedText += '\n' + receiptObj.name;
+  }
+
+  return { text: recognizedText, barcodeData };
+}
+
+const KNOWN_RECEIPT_MERCHANTS = [
+  // Supermärkte & Discounter
+  { keywords: ['rewe'], merchant: 'Rewe', main: 'Lebensmittel, Supermarkt & Discounter', sub: 'Rewe' },
+  { keywords: ['edeka'], merchant: 'Edeka', main: 'Lebensmittel, Supermarkt & Discounter', sub: 'Edeka' },
+  { keywords: ['aldi nord'], merchant: 'Aldi Nord', main: 'Lebensmittel, Supermarkt & Discounter', sub: 'Aldi Nord' },
+  { keywords: ['aldi süd', 'aldi sued'], merchant: 'Aldi Süd', main: 'Lebensmittel, Supermarkt & Discounter', sub: 'Aldi Süd' },
+  { keywords: ['aldi'], merchant: 'Aldi', main: 'Lebensmittel, Supermarkt & Discounter', sub: 'Aldi Süd' },
+  { keywords: ['lidl'], merchant: 'Lidl', main: 'Lebensmittel, Supermarkt & Discounter', sub: 'Lidl' },
+  { keywords: ['kaufland'], merchant: 'Kaufland', main: 'Lebensmittel, Supermarkt & Discounter', sub: 'Kaufland' },
+  { keywords: ['penny'], merchant: 'Penny', main: 'Lebensmittel, Supermarkt & Discounter', sub: 'Penny' },
+  { keywords: ['netto marken', 'netto discount', 'netto'], merchant: 'Netto', main: 'Lebensmittel, Supermarkt & Discounter', sub: 'Netto Marken-Discount' },
+  { keywords: ['norma'], merchant: 'Norma', main: 'Lebensmittel, Supermarkt & Discounter', sub: 'Norma' },
+  { keywords: ['globus'], merchant: 'Globus', main: 'Lebensmittel, Supermarkt & Discounter', sub: 'Globus' },
+  { keywords: ['tegut'], merchant: 'Tegut', main: 'Lebensmittel, Supermarkt & Discounter', sub: 'Tegut' },
+  { keywords: ['alnatura'], merchant: 'Alnatura', main: 'Lebensmittel, Supermarkt & Discounter', sub: 'Alnatura' },
+  { keywords: ['denns'], merchant: 'Denns Biomarkt', main: 'Lebensmittel, Supermarkt & Discounter', sub: 'Denns Biomarkt' },
+  { keywords: ['bio company'], merchant: 'Bio Company', main: 'Lebensmittel, Supermarkt & Discounter', sub: 'Bio Company' },
+  { keywords: ['trinkgut', 'getränke'], merchant: 'Getränkemarkt', main: 'Lebensmittel, Supermarkt & Discounter', sub: 'Getränkemarkt / Trinkgut' },
+
+  // Drogerie & Kosmetik
+  { keywords: ['dm-drogerie', 'dm markt', 'dm drogerie', 'dm '], merchant: 'dm-drogerie markt', main: 'Drogerie, Kosmetik & Körperpflege', sub: 'dm-drogerie markt' },
+  { keywords: ['rossmann'], merchant: 'Rossmann', main: 'Drogerie, Kosmetik & Körperpflege', sub: 'Rossmann' },
+  { keywords: ['müller drogerie', 'mueller drogerie'], merchant: 'Müller', main: 'Drogerie, Kosmetik & Körperpflege', sub: 'Müller Drogerie' },
+
+  // Elektronik & Software
+  { keywords: ['mediamarkt', 'media markt'], merchant: 'MediaMarkt', main: 'Elektronik, Internet, Handy & Software', sub: 'MediaMarkt' },
+  { keywords: ['saturn'], merchant: 'Saturn', main: 'Elektronik, Internet, Handy & Software', sub: 'Saturn' },
+  { keywords: ['apple'], merchant: 'Apple', main: 'Elektronik, Internet, Handy & Software', sub: 'Apple' },
+  { keywords: ['amazon'], merchant: 'Amazon', main: 'Elektronik, Internet, Handy & Software', sub: 'Amazon' },
+  { keywords: ['cyberport'], merchant: 'Cyberport', main: 'Elektronik, Internet, Handy & Software', sub: 'Cyberport' },
+  { keywords: ['conrad'], merchant: 'Conrad Electronic', main: 'Elektronik, Internet, Handy & Software', sub: 'Conrad Electronic' },
+  { keywords: ['telekom'], merchant: 'Deutsche Telekom', main: 'Elektronik, Internet, Handy & Software', sub: 'Handyvertrag & Mobilfunk' },
+  { keywords: ['vodafone'], merchant: 'Vodafone', main: 'Elektronik, Internet, Handy & Software', sub: 'Handyvertrag & Mobilfunk' },
+  { keywords: ['o2 '], merchant: 'o2 Telefonica', main: 'Elektronik, Internet, Handy & Software', sub: 'Handyvertrag & Mobilfunk' },
+
+  // Möbel & Baumarkt
+  { keywords: ['ikea'], merchant: 'IKEA', main: 'Möbel, Deko & Inneneinrichtung', sub: 'IKEA' },
+  { keywords: ['bauhaus'], merchant: 'Bauhaus', main: 'Wohnen & Haushalt (Heimwerken)', sub: 'Bauhaus' },
+  { keywords: ['obi'], merchant: 'OBI', main: 'Wohnen & Haushalt (Heimwerken)', sub: 'OBI' },
+  { keywords: ['hornbach'], merchant: 'Hornbach', main: 'Wohnen & Haushalt (Heimwerken)', sub: 'Hornbach' },
+  { keywords: ['toom'], merchant: 'Toom Baumarkt', main: 'Wohnen & Haushalt (Heimwerken)', sub: 'Toom Baumarkt' },
+
+  // Mobilität & Tanken
+  { keywords: ['shell'], merchant: 'Shell', main: 'Mobilität & Unterwegs (Auto, Bahn, ÖPNV)', sub: 'Tanken (Benzin, Diesel, Autogas)' },
+  { keywords: ['aral'], merchant: 'Aral', main: 'Mobilität & Unterwegs (Auto, Bahn, ÖPNV)', sub: 'Tanken (Benzin, Diesel, Autogas)' },
+  { keywords: ['totalenergies', 'total tankstelle'], merchant: 'Total', main: 'Mobilität & Unterwegs (Auto, Bahn, ÖPNV)', sub: 'Tanken (Benzin, Diesel, Autogas)' },
+  { keywords: ['esso'], merchant: 'Esso', main: 'Mobilität & Unterwegs (Auto, Bahn, ÖPNV)', sub: 'Tanken (Benzin, Diesel, Autogas)' },
+  { keywords: ['jet tankstelle'], merchant: 'JET', main: 'Mobilität & Unterwegs (Auto, Bahn, ÖPNV)', sub: 'Tanken (Benzin, Diesel, Autogas)' },
+  { keywords: ['deutsche bahn', 'bahn'], merchant: 'Deutsche Bahn', main: 'Mobilität & Unterwegs (Auto, Bahn, ÖPNV)', sub: 'Deutsche Bahn & Fernverkehr' },
+  { keywords: ['flixbus'], merchant: 'FlixBus', main: 'Mobilität & Unterwegs (Auto, Bahn, ÖPNV)', sub: 'FlixBus & Fernbus' },
+  { keywords: ['uber'], merchant: 'Uber', main: 'Mobilität & Unterwegs (Auto, Bahn, ÖPNV)', sub: 'Taxi, Uber & Fahrdienste' },
+
+  // Essen & Gastro
+  { keywords: ['mcdonald', 'mc donald'], merchant: "McDonald's", main: 'Ausgehen, Essen & Feiern', sub: 'Fast Food, Imbiss & Döner' },
+  { keywords: ['burger king'], merchant: 'Burger King', main: 'Ausgehen, Essen & Feiern', sub: 'Fast Food, Imbiss & Döner' },
+  { keywords: ['subway'], merchant: 'Subway', main: 'Ausgehen, Essen & Feiern', sub: 'Fast Food, Imbiss & Döner' },
+  { keywords: ['domino'], merchant: "Domino's Pizza", main: 'Ausgehen, Essen & Feiern', sub: 'Pizza, Pasta & Italienisch' },
+  { keywords: ['bäckerei', 'baeckerei', 'dörnbäcker', 'bäcker', 'baecker'], merchant: 'Bäckerei', main: 'Lebensmittel, Supermarkt & Discounter', sub: 'Bäckerei / Dorfbäcker' },
+
+  // Gesundheit
+  { keywords: ['apotheke'], merchant: 'Apotheke', main: 'Gesundheit & Medizin', sub: 'Apotheke & Medikamente' },
+  { keywords: ['docmorris'], merchant: 'DocMorris', main: 'Gesundheit & Medizin', sub: 'Online-Apotheke (DocMorris, Shop-Apotheke)' },
+  { keywords: ['shop apotheke'], merchant: 'Shop Apotheke', main: 'Gesundheit & Medizin', sub: 'Online-Apotheke (DocMorris, Shop-Apotheke)' }
+];
+
+async function parseReceiptData(text, barcodeData, fileName, formType) {
+  const result = {
+    amount: null,
+    date: null,
+    merchant: null,
+    mainCategory: null,
+    subCategory: null,
+    description: '',
+    isNewCategory: false
+  };
+
+  const safeType = formType === 'inc' ? 'inc' : 'exp';
+
+  // 1. Barcode / GiroCode EPC QR
+  if (barcodeData && typeof barcodeData === 'string' && barcodeData.startsWith('BCD')) {
+    const lines = barcodeData.split(/\r?\n/);
+    if (lines.length >= 8) {
+      if (lines[5] && lines[5].trim()) result.merchant = lines[5].trim();
+      const amtMatch = lines[7] ? lines[7].match(/(?:EUR)?([0-9]+(?:\.[0-9]{1,2})?)/i) : null;
+      if (amtMatch) result.amount = parseFloat(amtMatch[1]);
+      if (lines[10] && lines[10].trim()) result.description = lines[10].trim();
+      else if (lines[9] && lines[9].trim()) result.description = lines[9].trim();
+    }
+  }
+
+  // 2. Betrag (Summe / Total)
+  if (!result.amount && text) {
+    const sumRegexes = [
+      /(?:summe|gesamtbetrag|gesamt|endbetrag|total|zu zahlen|zahlbetrag|rechnungsbetrag|kartenzahlung|geg\.\s*bar|bar)\s*[:=]?\s*(?:eur|€)?\s*([0-9]{1,4}(?:[.,][0-9]{3})*[.,][0-9]{2})/i,
+      /(?:eur|€)\s*([0-9]{1,4}(?:[.,][0-9]{3})*[.,][0-9]{2})/i,
+      /([0-9]{1,4}(?:[.,][0-9]{3})*[.,][0-9]{2})\s*(?:eur|€)/i
+    ];
+
+    for (const rx of sumRegexes) {
+      const match = text.match(rx);
+      if (match && match[1]) {
+        let numStr = match[1].replace(/\./g, '').replace(',', '.');
+        const parsedNum = parseFloat(numStr);
+        if (!isNaN(parsedNum) && parsedNum > 0 && parsedNum < 1000000) {
+          result.amount = parsedNum;
+          break;
+        }
+      }
+    }
+
+    if (!result.amount) {
+      const allAmounts = [];
+      const generalAmtRegex = /\b([0-9]{1,4}(?:[.,][0-9]{3})*[.,][0-9]{2})\b/g;
+      let m;
+      while ((m = generalAmtRegex.exec(text)) !== null) {
+        let val = parseFloat(m[1].replace(/\./g, '').replace(',', '.'));
+        if (!isNaN(val) && val > 0 && val < 50000) {
+          allAmounts.push(val);
+        }
+      }
+      if (allAmounts.length > 0) {
+        result.amount = Math.max(...allAmounts);
+      }
+    }
+  }
+
+  // 3. Datum
+  if (text) {
+    const dateMatchGerman = text.match(/\b([0-3]?[0-9])[./-]([0-1]?[0-9])[./-](20[2-3][0-9]|[2-3][0-9])\b/);
+    if (dateMatchGerman) {
+      const day = String(parseInt(dateMatchGerman[1], 10)).padStart(2, '0');
+      const month = String(parseInt(dateMatchGerman[2], 10)).padStart(2, '0');
+      let year = dateMatchGerman[3];
+      if (year.length === 2) year = '20' + year;
+      if (parseInt(month, 10) >= 1 && parseInt(month, 10) <= 12 && parseInt(day, 10) >= 1 && parseInt(day, 10) <= 31) {
+        result.date = `${year}-${month}-${day}`;
+      }
+    }
+
+    if (!result.date) {
+      const isoMatch = text.match(/\b(20[2-3][0-9])-([0-1]?[0-9])-([0-3]?[0-9])\b/);
+      if (isoMatch) {
+        result.date = `${isoMatch[1]}-${String(parseInt(isoMatch[2], 10)).padStart(2, '0')}-${String(parseInt(isoMatch[3], 10)).padStart(2, '0')}`;
+      }
+    }
+  }
+
+  // 4. Händler / Laden
+  const textLower = (text + ' ' + (fileName || '')).toLowerCase();
+
+  for (const item of KNOWN_RECEIPT_MERCHANTS) {
+    const matched = item.keywords.some(kw => textLower.includes(kw));
+    if (matched) {
+      result.merchant = item.merchant;
+      result.mainCategory = item.main;
+      result.subCategory = item.sub;
+      break;
+    }
+  }
+
+  if (!result.merchant && text) {
+    const lines = text.split(/\r?\n/)
+      .map(l => l.trim())
+      .filter(l => l.length >= 3 && l.length <= 45);
+
+    const noiseWords = ['kassenbon', 'kassenzettel', 'quittung', 'rechnung', 'beleg', 'vielen dank', 'kunde', 'datum', 'uhrzeit', 'eur', 'summe', 'steuer', 'ust', 'tse', 'kartenzahlung', 'terminal', 'telefon', 'willkommen'];
+
+    for (const line of lines) {
+      const lineLow = line.toLowerCase();
+      const isNoise = noiseWords.some(nw => lineLow.includes(nw)) || /^[0-9.,:\-\s]+$/.test(line);
+      if (!isNoise) {
+        result.merchant = line;
+        break;
+      }
+    }
+  }
+
+  if (!result.merchant && fileName) {
+    const cleanName = fileName.replace(/\.[^/.]+$/, "").replace(/[_\-+]/g, ' ').trim();
+    if (cleanName.length >= 3) {
+      result.merchant = cleanName;
+    }
+  }
+
+  // 5. Kategorie zuordnen oder NEU ERSTELLEN
+  if (!result.mainCategory) {
+    if (result.merchant) {
+      const db = CATEGORIES_DB[safeType] || {};
+      let foundInDb = false;
+
+      for (const [mainCat, subs] of Object.entries(db)) {
+        const subMatch = subs.find(s => s.toLowerCase() === result.merchant.toLowerCase() || result.merchant.toLowerCase().includes(s.toLowerCase()));
+        if (subMatch) {
+          result.mainCategory = mainCat;
+          result.subCategory = subMatch;
+          foundInDb = true;
+          break;
+        }
+      }
+
+      if (!foundInDb) {
+        const mLow = result.merchant.toLowerCase();
+        let targetMain = safeType === 'inc' ? 'Sonstige Einnahmen' : 'Sonstige Ausgaben';
+
+        if (safeType === 'exp') {
+          if (/tier|hund|katz|fressnapf|zoo/i.test(mLow)) targetMain = 'Haustiere, Tierfutter & Tierarzt';
+          else if (/bäck|baeck|café|cafe|restaurant|imbiss|döner|pizza|burger|sushi/i.test(mLow)) targetMain = 'Ausgehen, Essen & Feiern';
+          else if (/sport|fitness|gym|kletter/i.test(mLow)) targetMain = 'Freizeit, Hobbys & Unterhaltung';
+          else if (/buch|buech|thalia/i.test(mLow)) targetMain = 'Bildung, Bücher, Studium & Beruf';
+          else if (/kleid|mode|schuh|fashion|snipes|zara|h&m/i.test(mLow)) targetMain = 'Kleidung, Schuhe & Accessoires';
+          else if (/arzt|zahnarzt|praxis|klinik|apothek/i.test(mLow)) targetMain = 'Gesundheit & Medizin';
+          else if (/kino|theater|konzert|ticket/i.test(mLow)) targetMain = 'Freizeit, Hobbys & Unterhaltung';
+          else if (/tank|kfz|auto|werkstatt|reifen/i.test(mLow)) targetMain = 'Mobilität & Unterwegs (Auto, Bahn, ÖPNV)';
+          else if (/elektronik|computer|handy|tech|software/i.test(mLow)) targetMain = 'Elektronik, Internet, Handy & Software';
+          else if (/bau|garten|blumen|baumarkt/i.test(mLow)) targetMain = 'Wohnen & Haushalt (Heimwerken)';
+          else if (/markt|supermarkt|lebensmittel/i.test(mLow)) targetMain = 'Lebensmittel, Supermarkt & Discounter';
+        }
+
+        result.mainCategory = targetMain;
+        result.subCategory = result.merchant;
+        result.isNewCategory = true;
+      }
+    } else {
+      result.mainCategory = safeType === 'inc' ? 'Sonstige Einnahmen' : 'Sonstige Ausgaben';
+      result.subCategory = 'Gesamt / Allgemein';
+    }
+  }
+
+  // 6. Notiz / Beschreibung
+  if (!result.description) {
+    if (result.merchant) {
+      result.description = `${result.merchant}${result.date ? ' (' + formatDateGerman(result.date) + ')' : ''}`;
+    } else if (fileName) {
+      result.description = fileName.replace(/\.[^/.]+$/, "");
+    }
+  }
+
+  return result;
+}
+
+async function applyParsedReceiptData(formType, parsed) {
+  const prefix = formType === 'edit' ? 'edit-tx' : formType;
+  let filledCount = 0;
+  let detailsText = [];
+
+  // 1. Betrag eintragen
+  if (parsed.amount && parsed.amount > 0) {
+    const amtEl = document.getElementById(`${prefix}-amount`);
+    if (amtEl) {
+      amtEl.value = parsed.amount.toFixed(2);
+      filledCount++;
+      detailsText.push(`${formatCurrency(parsed.amount)}`);
+    }
+  }
+
+  // 2. Datum eintragen
+  if (parsed.date) {
+    const dateEl = document.getElementById(`${prefix}-date`);
+    if (dateEl) {
+      dateEl.value = parsed.date;
+      filledCount++;
+      detailsText.push(`Datum: ${formatDateGerman(parsed.date)}`);
+    }
+  }
+
+  // 3. Kategorie & Unterkategorie auswählen (oder NEU erstellen!)
+  if (parsed.mainCategory) {
+    const catType = formType === 'inc' ? 'inc' : 'exp';
+    if (formType === 'edit') {
+      const editType = document.getElementById('edit-tx-type').value;
+      const actualCatType = editType === 'income' ? 'inc' : 'exp';
+      if (parsed.isNewCategory) {
+        await ensureCategoryExists(actualCatType, parsed.mainCategory, parsed.subCategory);
+      }
+      populateEditModalCategories(actualCatType, parsed.mainCategory, parsed.subCategory);
+    } else {
+      if (parsed.isNewCategory) {
+        await ensureCategoryExists(catType, parsed.mainCategory, parsed.subCategory);
+      }
+      const catEl = document.getElementById(`${prefix}-category`);
+      if (catEl) {
+        catEl.value = parsed.mainCategory;
+        onMainCategoryChange(prefix);
+        if (parsed.subCategory) {
+          const subEl = document.getElementById(`${prefix}-subcategory`);
+          if (subEl) subEl.value = parsed.subCategory;
+        }
+      }
+    }
+    filledCount++;
+    detailsText.push(`${parsed.subCategory || parsed.mainCategory}`);
+  }
+
+  // 4. Beschreibung eintragen
+  if (parsed.description) {
+    const descEl = document.getElementById(`${prefix}-desc`);
+    if (descEl && (!descEl.value || descEl.value.trim() === '')) {
+      descEl.value = parsed.description;
+    }
+  }
+
+  // Statusanzeige & NVDA Ansage
+  const statusEl = document.getElementById(`${formType}-receipt-status-banner`);
+  if (statusEl) {
+    if (filledCount > 0) {
+      const isNewCatMsg = parsed.isNewCategory 
+        ? ` · ✨ Neue Kategorie "${escapeHTML(parsed.subCategory)}" automatisch erstellt!` 
+        : '';
+      statusEl.className = 'receipt-status-banner success';
+      statusEl.innerHTML = `<span aria-hidden="true">✨</span><span><strong>Automatisch erkannt &amp; eingetragen:</strong> ${escapeHTML(detailsText.join(' · '))}${isNewCatMsg}</span>`;
+      statusEl.style.display = 'flex';
+      announceNVDA(`Belegdaten erkannt: ${detailsText.join(', ')} automatisch eingetragen.`);
+    } else {
+      statusEl.className = 'receipt-status-banner success';
+      statusEl.innerHTML = '<span aria-hidden="true">📎</span><span>Beleg angehängt. Bitte Betrag und Kategorie überprüfen.</span>';
+      statusEl.style.display = 'flex';
+      announceNVDA('Beleg angehängt.');
+    }
+  }
+}
+
+async function processReceiptFileAndAutofill(formType, file) {
+  const statusEl = document.getElementById(`${formType}-receipt-status-banner`);
+  if (statusEl) {
+    statusEl.className = 'receipt-status-banner scanning';
+    statusEl.innerHTML = '<span aria-hidden="true">⏳</span><span>Beleg wird komprimiert und analysiert...</span>';
+    statusEl.style.display = 'flex';
+  }
+
+  try {
+    const compressed = await compressReceiptFile(file);
+    if (formType === 'exp') currentExpenseReceipt = compressed;
+    else if (formType === 'inc') currentIncomeReceipt = compressed;
+    else if (formType === 'edit') currentEditReceipt = compressed;
+
+    renderReceiptPreview(formType);
+
+    const extracted = await extractTextFromReceipt(compressed);
+    const parsed = await parseReceiptData(extracted.text, extracted.barcodeData, file.name, formType);
+    await applyParsedReceiptData(formType, parsed);
+  } catch (err) {
+    console.error('Fehler bei Beleganalyse:', err);
+    if (statusEl) {
+      statusEl.className = 'receipt-status-banner';
+      statusEl.style.display = 'block';
+      statusEl.textContent = 'Hinweis: ' + (err.message || 'Beleg angehängt.');
+    }
+  }
+}
+
+function handleReceiptFileSelect(formType, files) {
+  if (!files || files.length === 0) return;
+  processReceiptFileAndAutofill(formType, files[0]);
+}
+
+function renderReceiptPreview(formType) {
+  let receipt = null;
+  if (formType === 'exp') receipt = currentExpenseReceipt;
+  else if (formType === 'inc') receipt = currentIncomeReceipt;
+  else if (formType === 'edit') receipt = currentEditReceipt;
+
+  const container = document.getElementById(`${formType}-receipt-preview-container`);
+  if (!container) return;
+
+  if (!receipt) {
+    container.style.display = 'none';
+    container.innerHTML = '';
     return;
   }
 
-  const price = parseFloat(rawVal);
-  const name = (nameInput && nameInput.value.trim()) || 'Wunsch';
+  const isPdf = receipt.type === 'application/pdf';
+  const kbSize = receipt.size ? Math.round(receipt.size / 1024) + ' KB' : '';
 
-  if (isNaN(price) || price <= 0) {
-    resultBox.innerHTML = '<p>💡 <em>Gib oben einen Preis ein, um zu sehen, was nach dem Kauf von deinem Monatsgeld noch übrig bleibt.</em></p>';
-    if (actionBox) actionBox.style.display = 'none';
-    currentSimulatedPurchase = null;
-    return;
+  let thumbHtml = '';
+  if (isPdf) {
+    thumbHtml = '<div class="receipt-thumb-icon" aria-hidden="true">📄</div>';
+  } else {
+    thumbHtml = `<img src="${receipt.data}" alt="Vorschau Beleg" class="receipt-thumb">`;
   }
 
-  const stats = calculateMonthStats(selectedYear, selectedMonth);
-  const leftoverAfter = stats.leftover - price;
-  const isAffordable = leftoverAfter >= 0;
-
-  resultBox.innerHTML = `
-    <div style="font-size: 20px; font-weight: bold; color: ${isAffordable ? 'var(--accent-income)' : 'var(--accent-expense)'};">
-      ${isAffordable ? '✅ Ja, das kannst du dir leisten!' : '⚠️ Achtung: Dein Monatsbudget wird überzogen!'}
-    </div>
-    <div style="margin-top: 6px;">
-      Wenn du dir <strong>${escapeHTML(name)}</strong> für <strong>${formatCurrency(price)}</strong> kaufst,
-      bleiben dir in diesem Monat noch <strong style="font-size: 22px; color: ${isAffordable ? 'var(--accent-income)' : 'var(--accent-expense)'};">${formatCurrency(leftoverAfter)}</strong> übrig.
+  container.innerHTML = `
+    <div class="receipt-preview-card">
+      ${thumbHtml}
+      <div class="receipt-info-col">
+        <div class="receipt-name" title="${escapeHTML(receipt.name)}">${escapeHTML(receipt.name)}</div>
+        <div class="receipt-meta">${isPdf ? 'PDF Dokument' : 'Bild'} · ${kbSize} · Bereit zum Speichern</div>
+      </div>
+      <div style="display: flex; gap: 6px; flex-shrink: 0;">
+        <button type="button" class="btn btn-secondary" onclick="openReceiptModalDirect('${formType}')" title="Beleg ansehen" aria-label="Beleg ${escapeHTML(receipt.name)} im Großbild ansehen" style="padding: 6px 10px; font-size: 14px;">
+          👁️ Ansehen
+        </button>
+        <button type="button" class="btn btn-delete-tx" onclick="removeReceipt('${formType}')" title="Beleg entfernen" aria-label="Beleg entfernen" style="padding: 6px 10px; font-size: 14px;">
+          🗑️ Entfernen
+        </button>
+      </div>
     </div>
   `;
-
-  if (actionBox) actionBox.style.display = 'block';
-  currentSimulatedPurchase = { name, price, date: selectedDateStr };
+  container.style.display = 'block';
 }
 
-async function saveSimulatedPurchase() {
-  if (!currentSimulatedPurchase) return;
-  appState.transactions.push({
-    id: `tx_${Date.now()}`,
-    type: 'expense',
-    account: 'bank',
-    amount: currentSimulatedPurchase.price,
-    category: 'Shopping & Wünsche',
-    description: `Geplant: ${currentSimulatedPurchase.name}`,
-    isPlanned: true,
-    date: currentSimulatedPurchase.date
+function removeReceipt(formType) {
+  if (formType === 'exp') currentExpenseReceipt = null;
+  else if (formType === 'inc') currentIncomeReceipt = null;
+  else if (formType === 'edit') currentEditReceipt = null;
+
+  renderReceiptPreview(formType);
+  const statusEl = document.getElementById(`${formType}-receipt-status-banner`);
+  if (statusEl) {
+    statusEl.style.display = 'none';
+    statusEl.innerHTML = '';
+  }
+  announceNVDA('Beleg entfernt.');
+}
+
+function openReceiptModalByTxId(txId) {
+  const tx = appState.transactions.find(t => t.id === txId) || (appState.recurring || []).find(r => r.id === txId);
+  if (!tx || !tx.receipt) return;
+  openReceiptViewer(tx.receipt, true, txId, null);
+}
+
+function openReceiptModalDirect(formType) {
+  let receipt = null;
+  if (formType === 'exp') receipt = currentExpenseReceipt;
+  else if (formType === 'inc') receipt = currentIncomeReceipt;
+  else if (formType === 'edit') receipt = currentEditReceipt;
+
+  if (!receipt) return;
+  openReceiptViewer(receipt, true, null, formType);
+}
+
+function openReceiptViewer(receipt, canDelete, activeTxId = null, formType = null) {
+  viewerReceipt = receipt;
+  viewerActiveTxId = activeTxId;
+  viewerActiveFormType = formType;
+  viewerZoom = 1.0;
+  viewerRotation = 0;
+
+  const modal = document.getElementById('receipt-viewer-modal');
+  const imgEl = document.getElementById('receipt-viewer-img');
+  const pdfEl = document.getElementById('receipt-viewer-pdf');
+  const metaEl = document.getElementById('receipt-viewer-meta');
+  const delBtn = document.getElementById('receipt-viewer-delete-btn');
+
+  if (delBtn) delBtn.style.display = canDelete ? 'inline-flex' : 'none';
+
+  const isPdf = receipt.type === 'application/pdf';
+  if (isPdf) {
+    imgEl.style.display = 'none';
+    pdfEl.style.display = 'block';
+    pdfEl.src = receipt.data;
+  } else {
+    pdfEl.style.display = 'none';
+    imgEl.style.display = 'block';
+    imgEl.src = receipt.data;
+    updateReceiptViewerTransform();
+  }
+
+  const kbSize = receipt.size ? Math.round(receipt.size / 1024) + ' KB' : '';
+  const dateStr = receipt.createdAt ? new Date(receipt.createdAt).toLocaleString('de-DE') : '';
+  if (metaEl) {
+    metaEl.textContent = `${receipt.name || 'Beleg'} · ${kbSize}${dateStr ? ' · Angehängt am ' + dateStr : ''}`;
+  }
+
+  modal.style.display = 'flex';
+  const heading = document.getElementById('receipt-viewer-heading');
+  if (heading) heading.focus();
+  announceNVDA('Beleg-Betrachter geöffnet.');
+}
+
+function closeReceiptModal() {
+  const modal = document.getElementById('receipt-viewer-modal');
+  if (modal) modal.style.display = 'none';
+  const imgEl = document.getElementById('receipt-viewer-img');
+  const pdfEl = document.getElementById('receipt-viewer-pdf');
+  if (imgEl) imgEl.src = '';
+  if (pdfEl) pdfEl.src = '';
+  viewerReceipt = null;
+  viewerActiveTxId = null;
+  viewerActiveFormType = null;
+}
+
+function zoomReceipt(delta) {
+  viewerZoom = Math.max(0.4, Math.min(4.0, viewerZoom + delta));
+  updateReceiptViewerTransform();
+  announceNVDA(`Zoom ${Math.round(viewerZoom * 100)} Prozent`);
+}
+
+function resetReceiptZoom() {
+  viewerZoom = 1.0;
+  updateReceiptViewerTransform();
+  announceNVDA('Originalgröße 100 Prozent');
+}
+
+function rotateReceipt() {
+  viewerRotation = (viewerRotation + 90) % 360;
+  updateReceiptViewerTransform();
+  announceNVDA(`Beleg gedreht auf ${viewerRotation} Grad`);
+}
+
+function updateReceiptViewerTransform() {
+  const imgEl = document.getElementById('receipt-viewer-img');
+  if (imgEl) {
+    imgEl.style.transform = `rotate(${viewerRotation}deg) scale(${viewerZoom})`;
+  }
+}
+
+function downloadReceipt() {
+  if (!viewerReceipt || !viewerReceipt.data) return;
+  const link = document.createElement('a');
+  link.href = viewerReceipt.data;
+  link.download = viewerReceipt.name || 'beleg';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  announceNVDA('Beleg heruntergeladen.');
+}
+
+async function deleteReceiptFromActiveTx() {
+  if (viewerActiveTxId) {
+    const tx = appState.transactions.find(t => t.id === viewerActiveTxId);
+    if (tx) {
+      delete tx.receipt;
+      await saveStateToEncryptedStorage();
+      updateOverview();
+    } else {
+      const rec = (appState.recurring || []).find(r => r.id === viewerActiveTxId);
+      if (rec) {
+        delete rec.receipt;
+        await saveStateToEncryptedStorage();
+        updateOverview();
+      }
+    }
+  } else if (viewerActiveFormType) {
+    removeReceipt(viewerActiveFormType);
+  }
+  closeReceiptModal();
+  announceNVDA('Beleg gelöscht.');
+}
+
+function openReceiptTextPastePrompt(formType) {
+  const modal = document.getElementById('receipt-text-prompt-modal');
+  const targetInput = document.getElementById('receipt-text-target-form');
+  const textInput = document.getElementById('receipt-text-input');
+  if (targetInput) targetInput.value = formType;
+  if (textInput) textInput.value = '';
+  if (modal) {
+    modal.style.display = 'flex';
+    if (textInput) textInput.focus();
+  }
+}
+
+function closeReceiptTextPrompt() {
+  const modal = document.getElementById('receipt-text-prompt-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function handleManualReceiptTextSubmit(e) {
+  e.preventDefault();
+  const formType = document.getElementById('receipt-text-target-form').value || 'exp';
+  const text = (document.getElementById('receipt-text-input').value || '').trim();
+  closeReceiptTextPrompt();
+  if (!text) return;
+
+  const parsed = await parseReceiptData(text, null, 'manueller_text', formType);
+  await applyParsedReceiptData(formType, parsed);
+}
+
+function setupReceiptPasteAndDropListeners() {
+  window.addEventListener('paste', async (e) => {
+    if (!e.clipboardData || !e.clipboardData.items) return;
+
+    for (const item of e.clipboardData.items) {
+      if (item.type && item.type.indexOf('image') !== -1) {
+        e.preventDefault();
+        const blob = item.getAsFile();
+        if (!blob) continue;
+
+        let targetForm = 'exp';
+        const editModal = document.getElementById('edit-tx-modal');
+        if (editModal && editModal.style.display !== 'none') {
+          targetForm = 'edit';
+        } else {
+          const incView = document.getElementById('view-income');
+          if (incView && incView.style.display !== 'none') {
+            targetForm = 'inc';
+          }
+        }
+        await processReceiptFileAndAutofill(targetForm, blob);
+        break;
+      }
+    }
   });
 
-  await saveStateToEncryptedStorage();
-  updateOverview();
-  announceNVDA(`Geplanter Kauf ${currentSimulatedPurchase.name} gespeichert!`);
+  ['exp', 'inc', 'edit'].forEach(formType => {
+    const box = document.getElementById(`${formType}-receipt-group`);
+    if (!box) return;
 
-  document.getElementById('sim-item-price').value = '';
-  document.getElementById('sim-item-name').value = '';
-  runPurchaseSimulation();
-    populateFilterAccountDropdown();
-  renderExpenseRankings(currentOverviewMode === 'day' ? dayStats.expenseList : (currentOverviewMode === 'month' ? stats.expenseList : periodAllTxs.filter(t => t.type === 'expense')));
-  checkLiquidityWarning(currentOverviewMode === 'day' ? dayStats.balances : stats.balances);
-  renderBudgetsList();
+    box.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      box.classList.add('drag-over');
+    });
+
+    box.addEventListener('dragleave', () => {
+      box.classList.remove('drag-over');
+    });
+
+    box.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      box.classList.remove('drag-over');
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        await processReceiptFileAndAutofill(formType, e.dataTransfer.files[0]);
+      }
+    });
+  });
 }
+
+// 13. KAUF-PLANER & SIMULATOR (Entfernt in v6.8.0)
 
 // ----------------------------------------------------------------------------
 // 14. EINSTELLUNGEN: DESIGN, SCHRIFTGRÖSSE, DAUERAUFTRÄGE
@@ -4841,19 +7389,48 @@ function renderSettingsRecurringList() {
     else if (rec.interval === 'yearly') freqLabel = `Jährlich im ${MONTH_NAMES[parseInt(rec.yearlyMonth || 0, 10)]}`;
     else if (rec.interval === 'quarterly') freqLabel = 'Alle 3 Monate';
 
+    let statusBadge = '<span style="display: inline-block; padding: 2px 6px; font-size: 11px; font-weight: bold; border-radius: 4px; background: rgba(76, 175, 80, 0.15); color: #2E7D32; margin-left: 6px;">🟢 Aktiv</span>';
+    if (rec.endYear !== undefined && rec.endMonth !== undefined) {
+      statusBadge = `<span style="display: inline-block; padding: 2px 6px; font-size: 11px; font-weight: bold; border-radius: 4px; background: rgba(244, 67, 54, 0.15); color: #C62828; margin-left: 6px;">🔴 Gekündigt zum ${MONTH_NAMES[rec.endMonth]} ${rec.endYear}</span>`;
+    } else if (rec.pauseActive && rec.pauseEndYear !== undefined && rec.pauseEndMonth !== undefined) {
+      statusBadge = `<span style="display: inline-block; padding: 2px 6px; font-size: 11px; font-weight: bold; border-radius: 4px; background: rgba(255, 193, 7, 0.2); color: #F57F17; margin-left: 6px;">⏸️ Pausiert bis ${MONTH_NAMES[rec.pauseEndMonth]} ${rec.pauseEndYear}</span>`;
+    } else if (rec.trialActive && rec.trialEndDate) {
+      statusBadge = `<span style="display: inline-block; padding: 2px 6px; font-size: 11px; font-weight: bold; border-radius: 4px; background: rgba(156, 39, 176, 0.15); color: #7B1FA2; margin-left: 6px;">🎁 Testphase bis ${formatDateGerman(rec.trialEndDate)}</span>`;
+    } else if (rec.discountActive && rec.discountEndYear !== undefined && rec.discountEndMonth !== undefined) {
+      statusBadge = `<span style="display: inline-block; padding: 2px 6px; font-size: 11px; font-weight: bold; border-radius: 4px; background: rgba(255, 152, 0, 0.2); color: #E65100; margin-left: 6px;">🏷️ Rabatt ${formatCurrency(rec.discountAmount)} bis ${MONTH_NAMES[rec.discountEndMonth]} ${rec.discountEndYear}</span>`;
+    } else if (rec.futurePriceActive && rec.futureStartYear !== undefined && rec.futureStartMonth !== undefined) {
+      statusBadge = `<span style="display: inline-block; padding: 2px 6px; font-size: 11px; font-weight: bold; border-radius: 4px; background: rgba(33, 150, 243, 0.15); color: #1565C0; margin-left: 6px;">📈 Ab ${MONTH_NAMES[rec.futureStartMonth]} ${rec.futureStartYear}: ${formatCurrency(rec.futureAmount)}</span>`;
+    }
+
+    let contractSub = '';
+    if (rec.hasContractDetails) {
+      const parts = [];
+      if (rec.contractNumber) parts.push(`Kd-Nr: ${escapeHTML(rec.contractNumber)}`);
+      if (rec.minTermDate) parts.push(`Mindestlaufzeit: ${formatDateGerman(rec.minTermDate)}`);
+      if (rec.noticePeriod) parts.push(`Frist: ${escapeHTML(rec.noticePeriod)}`);
+      if (rec.hotline) parts.push(`Hotline: ${escapeHTML(rec.hotline)}`);
+      if (parts.length > 0) {
+        contractSub = `<div style="font-size: 12px; color: var(--text-muted, #666); margin-top: 3px;">📝 ${parts.join(' | ')}</div>`;
+      }
+    }
+
     html += `
       <li class="tx-item" tabindex="0">
         <div class="tx-info">
           <span class="tx-icon" aria-hidden="true">🔁</span>
           <div class="tx-details">
-            <span class="tx-cat-name">${rec.name || rec.category}</span>
+            <div style="display: flex; align-items: center; flex-wrap: wrap;">
+              <span class="tx-cat-name">${rec.name || rec.category}</span>
+              ${statusBadge}
+            </div>
             <span class="tx-account-badge">${freqLabel} | Am ${rec.day}. des Monats | ${formatAccountName(rec.account || rec.fromAccount)}</span>
+            ${contractSub}
           </div>
         </div>
         <div class="tx-amount-col">
           <span class="tx-sum ${rec.type}">${rec.type === 'income' ? '+' : '-'} ${formatCurrency(rec.amount)}</span>
           <button type="button" class="btn-edit-tx" onclick="openEditRecModal('${rec.id}')">✏️ Bearbeiten</button>
-          <button type="button" class="btn-delete-tx" onclick="deleteRecurring('${rec.id}')">🗑️ Löschen</button>
+          <button type="button" class="btn-delete-tx" onclick="openEndOrDeleteRecModal('${rec.id}')">🗑️ Beenden / Löschen</button>
         </div>
       </li>
     `;
@@ -4912,7 +7489,7 @@ function initTheme() {
 function switchView(viewName) {
   currentActiveView = viewName;
 
-  const views = ['overview', 'expense', 'income', 'transfer', 'settings', 'accounts', 'wishlist', 'sync'];
+  const views = ['overview', 'expense', 'income', 'transfer', 'settings', 'accounts', 'wishlist', 'shopping', 'sync'];
   views.forEach(v => {
     const el = document.getElementById(`view-${v}`);
     const tab = document.getElementById(`tab-${v}`);
@@ -4970,7 +7547,13 @@ function switchView(viewName) {
     const newNameInput = document.getElementById('new-acc-name');
     if (newNameInput) newNameInput.focus();
     announceNVDA('Konto-Optionen und Konten verwalten (Reiter 6) geöffnet.');
-    } else if (viewName === 'sync') {
+    } else if (viewName === 'shopping') {
+    populateShoppingDropdowns();
+    renderShoppingList();
+    const newNameInput = document.getElementById('shopping-new-name');
+    if (newNameInput) newNameInput.focus();
+    announceNVDA('Einkaufsliste und Checkliste (Reiter 8) geöffnet.');
+  } else if (viewName === 'sync') {
     initSyncView();
   } else if (viewName === 'wishlist') {
     populateWishlistAccountDropdown();
@@ -5226,26 +7809,33 @@ async function resetVaultSetup() {
   window.location.reload();
 }
 
+let isUnlockingVault = false;
+
 async function unlockVaultWithPin(enteredPin, isFromBio = false) {
   if (!enteredPin) return false;
+  if (isUnlockingVault) return false;
 
   if (checkLockoutStatus()) {
     announceNVDA('Zugriff gesperrt wegen zu vieler Fehlversuche.', true);
     return false;
   }
 
+  isUnlockingVault = true;
   const pinInput = document.getElementById('pin-input');
   const errorMsg = document.getElementById('pin-error-msg');
+  const btnUnlock = document.getElementById('btn-unlock');
 
-  let storedData = localStorage.getItem(STORAGE_DATA_KEY);
-  let saltBase64 = localStorage.getItem(STORAGE_SALT_KEY) || currentSaltBase64;
-
-  if (window.__DISK_VAULT__ && window.__DISK_VAULT__.vault && window.__DISK_VAULT__.salt) {
-    storedData = window.__DISK_VAULT__.vault;
-    saltBase64 = window.__DISK_VAULT__.salt;
-  }
+  if (btnUnlock) btnUnlock.disabled = true;
 
   try {
+    let storedData = localStorage.getItem(STORAGE_DATA_KEY);
+    let saltBase64 = localStorage.getItem(STORAGE_SALT_KEY) || currentSaltBase64;
+
+    if (window.__DISK_VAULT__ && window.__DISK_VAULT__.vault && window.__DISK_VAULT__.salt) {
+      storedData = window.__DISK_VAULT__.vault;
+      saltBase64 = window.__DISK_VAULT__.salt;
+    }
+
     if (!storedData || !saltBase64) {
       // Neuer Datensafe
       const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -5268,103 +7858,103 @@ async function unlockVaultWithPin(enteredPin, isFromBio = false) {
       if (isFromBio) {
         localStorage.setItem('haushaltsbuch_bio_token', btoa(encodeURIComponent(enteredPin)));
       }
-      unlockApp();
-      announceNVDA('Neuer Datensafe erfolgreich eingerichtet.');
-      return true;
-    } else {
-      // Vorhandenen Datensafe entsperren
-      currentSaltBase64 = saltBase64;
-      const saltBuffer = base64ToArrayBuffer(saltBase64);
-      const salt = new Uint8Array(saltBuffer);
-      
-      let decrypted = null;
-      let healedFrom1234 = false;
-
-      try {
-        const key = await deriveKey(enteredPin, salt);
-        decrypted = await decryptData(storedData, key);
-        cryptoKey = key;
-      } catch (decryptErr) {
-        // AUTO-HEALING: Prüfen, ob der Tresor versehentlich mit '1234' verschlüsselt war
-        if (enteredPin !== '1234') {
-          try {
-            const fallbackKey = await deriveKey('1234', salt);
-            decrypted = await decryptData(storedData, fallbackKey);
-            if (decrypted) {
-              healedFrom1234 = true;
-              // Repariere sofort auf echte PIN
-              cryptoKey = await deriveKey(enteredPin, salt);
-              appState = decrypted;
-              await saveStateToEncryptedStorage();
-              console.log('[Auto-Healing] Tresor erfolgreich von 1234 auf Nutzer-PIN repariert!');
-            }
-          } catch(e2) {}
-        }
-        if (!decrypted) {
-          throw decryptErr;
-        }
-      }
-
-      appState = decrypted;
-      if (!appState.initialBalances) appState.initialBalances = { bank: 0, paypal: 0, savings: 0, cash: 0 };
-      if (!appState.customCategories) appState.customCategories = { exp: {}, inc: {}, trf: {} };
-      if (!appState.wishlist || !Array.isArray(appState.wishlist)) appState.wishlist = [];
-      if (!appState.transactions) appState.transactions = [];
-      if (!appState.recurring) appState.recurring = [];
-
-      setFailedAttempts(0);
-      setLockoutEndTime(0);
-      window.__ACTIVE_PIN__ = enteredPin;
-
-      if (isFromBio || localStorage.getItem('haushaltsbuch_bio_enabled') === 'true') {
-        try {
-          localStorage.setItem('haushaltsbuch_bio_token', btoa(encodeURIComponent(enteredPin)));
-        } catch(e) {}
-      }
-
       if (pinInput) pinInput.value = '';
       if (errorMsg) errorMsg.style.display = 'none';
 
-      unlockApp();
-
-      if (healedFrom1234) {
-        const healMsg = 'Erfolgreich entsperrt! Dein Tresor wurde automatisch repariert und synchronisiert.';
-        announceNVDA(healMsg, true);
-      } else {
-        announceNVDA('Erfolgreich entsperrt! Alle Finanzdaten wurden geladen.');
+      try {
+        unlockApp();
+      } catch (uiErr) {
+        console.error('Fehler beim Initialisieren der App-Oberfläche:', uiErr);
       }
-
-      if (typeof BiometricAuth !== 'undefined' && BiometricAuth.isSupported && !localStorage.getItem('haushaltsbuch_bio_token') && !isFromBio) {
-        setTimeout(() => {
-          if (confirm('👆 Möchtest du die Fingerabdruck-Entsperrung für dein Smartphone aktivieren, um künftig ohne PIN-Eingabe zu öffnen?')) {
-            BiometricAuth.enable(enteredPin);
-          }
-        }, 1200);
-      }
+      announceNVDA('Neuer Datensafe erfolgreich eingerichtet.');
       return true;
     }
-  } catch (err) {
-    let attempts = getFailedAttempts() + 1;
-    setFailedAttempts(attempts);
 
-    if (attempts >= MAX_FAILED_ATTEMPTS) {
-      const lockoutEnd = Date.now() + LOCKOUT_DURATION_MS;
-      setLockoutEndTime(lockoutEnd);
-      checkLockoutStatus();
-      announceNVDA('5 Fehlversuche erreicht! Der Zugriff ist für 2 Stunden gesperrt.', true);
-    } else {
-      const remainingAttempts = MAX_FAILED_ATTEMPTS - attempts;
-      if (errorMsg) {
-        errorMsg.textContent = `❌ Falsche PIN oder Passwort! Zugriff verweigert. (Noch ${remainingAttempts} Versuch(e) übrig)`;
-        errorMsg.style.display = 'block';
+    // Vorhandenen Datensafe entsperren
+    currentSaltBase64 = saltBase64;
+    const saltBuffer = base64ToArrayBuffer(saltBase64);
+    const salt = new Uint8Array(saltBuffer);
+    
+    let decrypted = null;
+    let healedFrom1234 = false;
+
+    // Nur das Entschlüsseln mit der eingegebenen PIN entscheidet über die Richtigkeit
+    try {
+      const key = await deriveKey(enteredPin, salt);
+      decrypted = await decryptData(storedData, key);
+      cryptoKey = key;
+    } catch (decryptErr) {
+      // PIN ist tatsächlich falsch!
+      let attempts = getFailedAttempts() + 1;
+      setFailedAttempts(attempts);
+
+      if (attempts >= MAX_FAILED_ATTEMPTS) {
+        const lockoutEnd = Date.now() + LOCKOUT_DURATION_MS;
+        setLockoutEndTime(lockoutEnd);
+        checkLockoutStatus();
+        announceNVDA('5 Fehlversuche erreicht! Der Zugriff ist für 2 Stunden gesperrt.', true);
+      } else {
+        const remainingAttempts = MAX_FAILED_ATTEMPTS - attempts;
+        if (errorMsg) {
+          errorMsg.textContent = `❌ Falsche PIN oder Passwort! Zugriff verweigert. (Noch ${remainingAttempts} Versuch(e) übrig)`;
+          errorMsg.style.display = 'block';
+        }
+        if (pinInput) {
+          pinInput.value = '';
+          pinInput.focus();
+        }
+        announceNVDA(`Falsche PIN. Zugriff verweigert. Noch ${remainingAttempts} Versuch(e) übrig. Bitte erneut eingeben.`, true);
       }
-      if (pinInput) {
-        pinInput.value = '';
-        pinInput.focus();
-      }
-      announceNVDA(`Falsche PIN. Zugriff verweigert. Noch ${remainingAttempts} Versuch(e) übrig. Bitte erneut eingeben.`, true);
+      return false;
     }
-    return false;
+
+    // Hier ist sichergestellt: PIN ist KORREKT und Entschlüsselung war ERFOLGREICH!
+    appState = decrypted;
+    if (!appState.initialBalances) appState.initialBalances = { bank: 0, paypal: 0, savings: 0, cash: 0 };
+    if (!appState.customCategories) appState.customCategories = { exp: {}, inc: {}, trf: {} };
+    if (!appState.wishlist || !Array.isArray(appState.wishlist)) appState.wishlist = [];
+    if (!appState.shoppingList || !Array.isArray(appState.shoppingList)) appState.shoppingList = [];
+    if (!appState.transactions) appState.transactions = [];
+    if (!appState.recurring) appState.recurring = [];
+
+    setFailedAttempts(0);
+    setLockoutEndTime(0);
+    window.__ACTIVE_PIN__ = enteredPin;
+
+    if (isFromBio || localStorage.getItem('haushaltsbuch_bio_enabled') === 'true') {
+      try {
+        localStorage.setItem('haushaltsbuch_bio_token', btoa(encodeURIComponent(enteredPin)));
+      } catch(e) {}
+    }
+
+    if (pinInput) pinInput.value = '';
+    if (errorMsg) errorMsg.style.display = 'none';
+
+    try {
+      unlockApp();
+    } catch (uiErr) {
+      console.error('Fehler beim Initialisieren der App-Oberfläche nach Entsperren:', uiErr);
+    }
+
+    if (healedFrom1234) {
+      const healMsg = 'Erfolgreich entsperrt! Dein Tresor wurde automatisch repariert und synchronisiert.';
+      announceNVDA(healMsg, true);
+    } else {
+      announceNVDA('Erfolgreich entsperrt! Alle Finanzdaten wurden geladen.');
+    }
+
+    if (typeof BiometricAuth !== 'undefined' && BiometricAuth.isSupported && !localStorage.getItem('haushaltsbuch_bio_token') && !isFromBio) {
+      setTimeout(() => {
+        if (confirm('👆 Möchtest du die Fingerabdruck-Entsperrung für dein Smartphone aktivieren, um künftig ohne PIN-Eingabe zu öffnen?')) {
+          BiometricAuth.enable(enteredPin);
+        }
+      }, 1200);
+    }
+    return true;
+
+  } finally {
+    isUnlockingVault = false;
+    if (btnUnlock) btnUnlock.disabled = false;
   }
 }
 
@@ -5840,7 +8430,7 @@ async function submitFeatureFeedback(e) {
     Absender: author,
     Nachricht: message,
     Datum: now,
-    AppVersion: 'v6.0.2'
+    AppVersion: CURRENT_APP_VERSION
   });
 
   const port = window.__LOCAL_PORT__ || 48123;
