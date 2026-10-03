@@ -1,0 +1,2509 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' https: http: wss: ws: data: blob:; img-src 'self' data: blob:;">
+<title>Barrierefreie Finanzen - Mit flexiblen Zeiträumen & anpassbarem Design (NVDA)</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="theme-light font-normal" id="app-body">
+
+<!-- Live-Regionen für NVDA Screenreader Mitteilungen -->
+<div id="sr-live" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+<div id="sr-live-assertive" class="sr-only" aria-live="assertive" aria-atomic="true"></div>
+
+<!-- =========================================================================
+ 0. MODAL DIALOG: ÄNDERUNGSPROTOKOLL / WAS IST NEU (VOR PIN EINGABE)
+ ========================================================================= -->
+<div id="changelog-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="changelog-modal-heading" style="display: none; z-index: 100000;">
+<div class="modal-dialog-box" style="max-width: 680px;">
+<div style="display: flex; align-items: center; gap: 12px; border-bottom: 2px solid var(--border-color); padding-bottom: 12px; margin-bottom: 16px;">
+<span style="font-size: 32px;" aria-hidden="true">📜</span>
+<div>
+<h2 id="changelog-modal-heading" tabindex="-1" style="margin: 0; font-size: 24px;">Was ist neu in diesem Update? (v6.2.0)</h2>
+<span style="font-size: 15px; color: var(--sub-text);">Offizielles Änderungsprotokoll & Verbesserungen</span>
+</div>
+</div>
+
+<div class="changelog-content" style="max-height: 52vh; overflow-y: auto; padding-right: 8px; font-size: 16px; line-height: 1.6;">
+<div style="background: rgba(76, 175, 80, 0.08); border-left: 6px solid #4CAF50; padding: 14px 18px; border-radius: 8px; margin-bottom: 14px;">
+<h3 style="margin: 0 0 8px 0; color: #2E7D32; font-size: 20px;">🛡️ Neu in Version 6.0.2 (Sicherheits-Härtung, Rollierende Backups &amp; Update-Schutz)</h3>
+<ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px;">
+<li>
+<strong>🔒 Token-Schutz für lokalen Server (CSRF-Schutz):</strong><br>
+Der im Hintergrund laufende TCP-Server verlangt ab sofort einen dynamischen, geheimen Session-Token (<code>X-Vault-Token</code>). Fremde Browser-Tabs oder im Web geöffnete Seiten werden sofort abgewiesen und haben keinerlei Zugriff auf deinen Tresor.
+</li>
+<li>
+<strong>💾 Automatische rollierende Backups (Tresor_Sicherheitskopien):</strong><br>
+Vor jedem Speichern und vor jedem Programm-Update wird im Unterordner <code>Tresor_Sicherheitskopien</code> automatisch ein rotierender Schnappschuss deines Tresors mit Zeitstempel gesichert. Bis zu 5 historische Stände bleiben erhalten – versehentlicher Datenverlust ist ausgeschlossen.
+</li>
+<li>
+<strong>🛡️ Garantierte Abwärtskompatibilität:</strong><br>
+Keine neuen Menüs oder geänderten Tastenkombinationen. Alle bestehenden Daten, Konten, Spartöpfe und dein PIN bleiben zu 100% erhalten und funktionieren nahtlos weiter.
+</li>
+</ul>
+</div>
+
+<div style="background: rgba(76, 175, 80, 0.08); border-left: 6px solid #4CAF50; padding: 14px 18px; border-radius: 8px; margin-bottom: 14px;">
+<h3 style="margin: 0 0 8px 0; color: #2E7D32; font-size: 20px;">⭐ Neu in Version 6.0.1 (Aktuelles Update: Umbuchungs-Daueraufträge, Sparpläne &amp; Anzeige in der Übersicht)</h3>
+<ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px;">
+<li>
+<strong>🔄 Umbuchungs-Daueraufträge &amp; Sparpläne repariert:</strong><br>
+Beim Anlegen von Sparplänen und Daueraufträgen unter „Reiter 4: Umbuchen &amp; Sparen“ blockierte zuvor ein verstecktes Pflichtfeld die Speicherung im Browser. Dies wurde behoben – Sparpläne (wöchentlich, monatlich, quartalsweise, halbjährlich, jährlich) lassen sich nun reibungslos anlegen.
+</li>
+<li>
+<strong>📋 Eigener Bereich „🔄 Umbuchungen &amp; Sparpläne“ in der Hauptübersicht:</strong><br>
+In Reiter 1 (Übersicht) gibt es ab sofort eine eigene Karte und eine vollständige Liste für alle Umbuchungen und ausgeführten Sparpläne mit Quell- und Zielkonto (z. B. <em>Von: Bankkonto ➔ An: Tagesgeldkonto</em>), Betrag, Datum, Bearbeiten- und Löschen-Funktion.
+</li>
+<li>
+<strong>🔍 Vollständige Integration in die Super-Suche &amp; Kontenfilter:</strong><br>
+Die intelligente Suche durchsucht jetzt auch alle Umbuchungen und Sparpläne. Wird nach einem Konto gefiltert, erscheinen auch alle Umbuchungen, bei denen das gewählte Konto als Absender oder Empfänger beteiligt ist.
+</li>
+</ul>
+</div>
+
+<div style="background: rgba(76, 175, 80, 0.08); border-left: 6px solid #4CAF50; padding: 14px 18px; border-radius: 8px; margin-bottom: 14px;">
+<h3 style="margin: 0 0 8px 0; color: #2E7D32; font-size: 20px;">⭐ Neu in Version 6.0.0 (Meilenstein-Release: Intelligente Suche, Ratenrechner, Spartopf-Architektur &amp; Bereinigungen)</h3>
+<ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px;">
+<li>
+<strong>🔍 Intelligente Super-Suche mit Tippfehler-Toleranz (Fuzzy Match):</strong><br>
+Die Suche in der Übersicht verzeiht ab sofort Schreib- und Tippfehler (z. B. <code>amazn</code> findet Amazon, <code>gehald</code> findet Gehalt, <code>baeker</code> findet Bäckerei). Deutsche Umlaute und Laut-Kombinationen (ck/k, ph/f) werden vollautomatisch normalisiert. Erkennt zudem Betragsbereiche (z. B. <code>20-50</code>, <code>&gt;50</code>), relative Datumsangaben (<code>heute</code>, <code>gestern</code>, <code>September</code>) und Negation (<code>-Begriff</code>). Listen mit Treffern klappen für Screenreader automatisch auf.
+</li>
+<li>
+<strong>💳 Raten- &amp; Finanzierungsrechner ohne Doppeleingabe:</strong><br>
+Der Kaufpreis wird nur noch 1x im Hauptfeld eingetragen und berechnet die Monatsrate live beim Tippen. Alle Zusatzoptionen (Anbieter wie PayPal/Klarna, Anzahlung, Zinsen, Schlussrate) sind übersichtlich in einem aufklappbaren Bereich untergebracht.
+</li>
+<li>
+<strong>🎯 Strikte Spartopf-Architektur &amp; Bereinigte Menüs:</strong><br>
+Spartöpfe werden sauber zentral in Reiter 6 angelegt. Direkte freihändige Buchungsbuttons wurden entfernt: Geld wird nun verbindlich über das Umbuchungs-Menü (Reiter 4) mit Quell- und Zielkonto überwiesen. In der Wunschliste (Reiter 7) wählt man direkt aus den bestehenden Spartöpfen aus.
+</li>
+<li>
+<strong>📅 Natürliche Datums- &amp; Fälligkeitsbeschriftungen:</strong><br>
+Keine holprigen Standardphrasen mehr: Ausgaben haben ein echtes <em>„Datum der Ausgabe (Kaufdatum)“</em>, Ratenkäufe ein <em>„Kaufdatum &amp; Beginn der Ratenzahlung“</em> und Daueraufträge einen <em>„Fälligkeitstag im Monat“</em>. Schnelltasten wie <code>[Heute]</code>, <code>[Gestern]</code>, <code>[1.]</code>, <code>[15.]</code> und <code>[Monatsende]</code> setzen das Datum mit einem einzigen Tastendruck.
+</li>
+<li>
+<strong>🧹 Bereinigte Einstellungen (Reiter 5):</strong><br>
+Die doppelten Listen für Daueraufträge und Ratenkäufe wurden aus den Einstellungen entfernt, da sie bereits in der Übersicht und der Wunschliste integriert sind.
+</li>
+<li>
+<strong>🛡️ Vollständige Absicherung des Sperrbildschirms:</strong><br>
+PIN im Klartext anzeigen/verbergen und Tresor-Reset wurden lückenlos funktionsfähig angebunden und getestet.
+</li>
+<li>
+<strong>✅ 100% Barrierefreiheit &amp; 0 Duplikate:</strong><br>
+Vollständiger Audit bestanden: 0 doppelte IDs, 0 doppelte Funktionen, 0 doppelte Kategorien, 74 von 74 Event-Handlern geprüft.
+</li>
+</ul>
+</div>
+<ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px;">
+<li>
+<strong>🔄 Perfektionierte Umbuchungen &amp; Sparpläne (Reiter 4):</strong><br>
+Alle Sparplan-Intervalle (Wöchentlich, Monatlich, Quartalsweise, Halbjährlich, Jährlich) werden nun fehlerfrei berechnet und übertragen. Gleiche Quell- und Zielkonten werden verlässlich abgefangen.
+</li>
+<li>
+<strong>✨ Eigene Kategorien für alle Bereiche:</strong><br>
+Füge eigene Geschäfte oder Hauptkategorien für Ausgaben, Einnahmen und Umbuchungen hinzu – sie sind sofort in der App verfügbar und werden an den Entwickler übertragen.
+</li>
+<li>
+<strong>🟢 Einnahmen &amp; 🔴 Ausgaben vollständig garantiert:</strong><br>
+Alle Kategorien laden zuverlässig und synchronisieren sich bei jedem Reiterwechsel.
+</li>
+<li>
+<strong>💳 Dedizierter Haupt-Reiter 6: Konto-Optionen &amp; Konten-Verwaltung (Taste 6).</strong>
+</li>
+<li>
+<strong>🎯 Monats-Budgets &amp; Ausgaben-Limits in Reiter 5 (Einstellungen).</strong>
+</li>
+<li>
+<strong>📥 Bank-Kontoauszug / CSV-Import &amp; 📄 PDF-Druckberichte in Reiter 5.</strong>
+</li>
+<li>
+<strong>🛒 Einkaufs- &amp; Kassenrechner ganz unten in der Übersicht (ein- und zuklappbar).</strong>
+</li>
+<li>
+<strong>🏆 Ausgaben-Rangliste als ein- und zuklappbares Akkordeon.</strong>
+</li>
+<li>
+<strong>🔒 100% reiner Textmodus für NVDA-Bildschirmleser (0 Emojis).</strong>
+</li>
+</ul>
+</div>
+<div style="background: rgba(76, 175, 80, 0.08); border-left: 6px solid #4CAF50; padding: 14px 18px; border-radius: 8px; margin-bottom: 14px;">
+<h3 style="margin: 0 0 8px 0; color: #2E7D32; font-size: 20px;">⭐ Neu in Version 5.3.5.2 (Einnahmen &amp; Ausgaben Perfektionierung)</h3>
+<ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px;">
+<li>
+<strong>🟢 Einnahmen &amp; 🔴 Ausgaben vollständig garantiert:</strong><br>
+Alle 23 Ausgaben- und 9 Einnahmen-Kategorien inklusive aller Unterkategorien und Konten laden nun absolut zuverlässig und synchronisieren sich bei jedem Reiterwechsel automatisch.
+</li>
+<li>
+<strong>💳 Dedizierter Haupt-Reiter 6: Konto-Optionen &amp; Konten-Verwaltung (Taste 6):</strong><br>
+Verwalte beliebig viele eigene Konten mit 9 Kontotypen (Girokonto, Bargeld, PayPal, Tagesgeld, Sparbuch, Depot, Krypto, Darlehen etc.).
+</li>
+<li>
+<strong>🎯 Monats-Budgets &amp; Ausgaben-Limits in Reiter 5 (Einstellungen):</strong><br>
+Setze Budgetgrenzen mit Ampelsystem und automatischer NVDA-Sprachwarnung bei 80% und 100%.
+</li>
+<li>
+<strong>📥 Bank-Kontoauszug / CSV-Import &amp; 📄 PDF-Druckberichte in Reiter 5.</strong>
+</li>
+<li>
+<strong>🛒 Einkaufs- &amp; Kassenrechner ganz unten in der Übersicht (ein- und zuklappbar).</strong>
+</li>
+<li>
+<strong>🏆 Ausgaben-Rangliste als ein- und zuklappbares Akkordeon.</strong>
+</li>
+<li>
+<strong>🔒 100% reiner Textmodus für NVDA-Bildschirmleser (0 Emojis).</strong>
+</li>
+</ul>
+</div>
+<div style="background: rgba(76, 175, 80, 0.08); border-left: 6px solid #4CAF50; padding: 14px 18px; border-radius: 8px; margin-bottom: 14px;">
+<h3 style="margin: 0 0 8px 0; color: #2E7D32; font-size: 20px;">⚡ Neu in Version 5.3.5.1 (Kategorien-Hotfix &amp; Stabilität)</h3>
+<ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px;">
+<li>
+<strong>✅ Kategorien beim Eintragen von Ausgaben &amp; Einnahmen garantiert:</strong><br>
+Alle 23 Ausgaben- und 9 Einnahmen-Kategorien sind nun unverlierbar direkt im Programm hinterlegt und laden sofort beim Öffnen der Reiter.
+</li>
+<li>
+<strong>💳 Dedizierter Reiter 6: Konto-Optionen &amp; Konten-Verwaltung (Taste 6):</strong><br>
+Verwalte eigene Konten mit 9 Kontotypen (Girokonto, Bargeld, PayPal, Tagesgeld, Sparbuch, Depot, Krypto, Darlehen etc.).
+</li>
+<li>
+<strong>🎯 Monats-Budgets &amp; Ausgaben-Limits in Reiter 5 (Einstellungen):</strong><br>
+Setze Budgetgrenzen mit Ampelsystem und automatischer NVDA-Sprachwarnung bei 80% und 100%.
+</li>
+<li>
+<strong>📥 Bank-Kontoauszug / CSV-Import &amp; 📄 PDF-Druckberichte in Reiter 5.</strong>
+</li>
+<li>
+<strong>🛒 Einkaufs- &amp; Kassenrechner ganz unten in der Übersicht (ein- und zuklappbar).</strong>
+</li>
+<li>
+<strong>🏆 Ausgaben-Rangliste als ein- und zuklappbares Akkordeon.</strong>
+</li>
+</ul>
+</div>
+<div style="background: rgba(33, 150, 243, 0.08); border-left: 6px solid #2196F3; padding: 14px 18px; border-radius: 8px; margin-bottom: 14px;">
+<h3 style="margin: 0 0 8px 0; color: #1976D2; font-size: 20px;">⭐ Neu in Version 5.3.5 (Umfassende Finanz-Intelligenz Suite)</h3>
+<ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px;">
+<li>
+<strong>💳 Neuer Haupt-Reiter 6: Konto-Optionen &amp; Konten-Verwaltung (Taste 6):</strong><br>
+Verwalte beliebig viele eigene Konten mit allen 9 Kontotypen (Girokonto, Kreditkarte, PayPal, Tagesgeld/Sparkonto, Bargeld, Wertpapier-Depots/ETFs, Krypto, Darlehen, Gutscheine).
+</li>
+<li>
+<strong>🎯 Monats-Budgets &amp; Ausgaben-Limits in Reiter 5 (Einstellungen):</strong><br>
+Setze Ausgaben-Limits für deine Kategorien mit Ampelsystem und automatischer NVDA-Sprachwarnung bei 80% und 100%.
+</li>
+<li>
+<strong>📥 Bank-Kontoauszug / CSV-Import in Reiter 5:</strong><br>
+Kontoauszüge (.csv) aller Banken mit interaktiver Vorschau-Liste einlesen und automatisch kategorisieren lassen.
+</li>
+<li>
+<strong>📄 Druckbarer Monatsbericht &amp; Steuer-Nachweis (PDF-Export in Reiter 5):</strong><br>
+Druckfertige Finanz- und Steuerberichte mit 1 Klick erstellen und ausdrucken.
+</li>
+<li>
+<strong>🔍 Globale Live-Suche &amp; Buchungs-Filter in der Übersicht:</strong><br>
+Blitzschnell nach Läden, Texten, Konten oder Status (Gebucht / Geplant) filtern.
+</li>
+<li>
+<strong>⚠️ Smarte Liquiditäts- &amp; Kontodeckungs-Warnung:</strong><br>
+Rechnet voraus, ob das Girokonto für anstehende Daueraufträge bis Monatsende ausreicht.
+</li>
+<li>
+<strong>🛒 Barrierefreier Einkaufs- &amp; Kassenrechner (ein- und zuklappbar):</strong><br>
+Ganz unten in der Übersicht Artikel &amp; Preise im Supermarkt live zusammenrechnen und direkt als Ausgabe buchen.
+</li>
+<li>
+<strong>🏆 Ausgaben-Rangliste als klappbares Akkordeon:</strong><br>
+Die Top-5-Geldfresser des Monats mit Rangliste und Prozentanteilen.
+</li>
+<li>
+<strong>🔒 100% reiner Textmodus für NVDA-Bildschirmleser (0 Emojis).</strong>
+</li>
+</ul>
+</div>
+<div style="background: rgba(33, 150, 243, 0.08); border-left: 6px solid #2196F3; padding: 14px 18px; border-radius: 8px; margin-bottom: 14px;">
+<h3 style="margin: 0 0 8px 0; color: #1976D2; font-size: 20px;">⭐ Neu in Version 5.3.0 (Großes Meilenstein-Update)</h3>
+<ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px;">
+<li>
+<strong>💳 Neuer Haupt-Reiter 6: Konto-Optionen &amp; Konten-Verwaltung (Taste 6):</strong><br>
+Verwalte ab sofort beliebig viele eigene Konten außerhalb der Einstellungen in einem eigenen Hauptbereich!
+</li>
+<li>
+<strong>🏦 Alle 9 Kontotypen unterstützt:</strong><br>
+Girokonto, Kreditkarte, PayPal, Tagesgeld/Sparkonto, Bargeld/Portemonnaie, Wertpapier-Depot/ETFs, Krypto-Wallet, Bausparvertrag/Darlehen und Gutscheine/Sonstiges.
+</li>
+<li>
+<strong>✏️ Konten flexibel anpassen:</strong><br>
+Benenne Konten jederzeit um, ändere das Startguthaben oder lösche nicht mehr benötigte Konten mit Sicherheitsabfrage.
+</li>
+<li>
+<strong>📊 Automatische Kontostandskarten in der Übersicht:</strong><br>
+Für jedes angelegte Konto wird automatisch eine eigene Karte mit aktuellem Saldo in der Übersicht angezeigt.
+</li>
+<li>
+<strong>📅 Intelligente Datumserkennung:</strong><br>
+Zukünftige Buchungen werden automatisch als <em>🎯 Geplant</em> gekennzeichnet, heutige oder vergangene Buchungen als <em>✅ Gebucht</em>.
+</li>
+<li>
+<strong>🛠️ Vollständige Bearbeitbarkeit:</strong><br>
+Ausnahmslose nachträgliche Anpassung aller Felder bei Buchungen und Daueraufträgen.
+</li>
+<li>
+<strong>🔒 Gesicherter Änderungsprotokoll-Autostart &amp; 100% NVDA-Sprachklarheit.</strong>
+</li>
+</ul>
+</div>
+<div style="background: rgba(76, 175, 80, 0.08); border-left: 6px solid #4CAF50; padding: 14px 18px; border-radius: 8px; margin-bottom: 14px;">
+<h3 style="margin: 0 0 8px 0; color: #4CAF50; font-size: 19px;">⭐ Neu in Version 5.1.2.1 (Aktuelles Update)</h3>
+<ul style="margin: 0; padding-left: 20px;">
+<li style="margin-bottom: 6px;">
+<strong>📜 Änderungsprotokoll öffnet sich bei jedem Update garantiert automatisch:</strong><br>
+Die Anzeige der Neuerungen vor dem Starten ist fest im Programmstart verankert.
+</li>
+<li style="margin-bottom: 6px;">
+<strong>🔒 Schutz vor versehentlichem Deaktivieren:</strong><br>
+Das Häkchen im Popup-Fenster wurde entfernt. Die Funktion kann nur noch ganz bewusst in Reiter 5 (Einstellungen) ein- oder ausgeschaltet werden.
+</li>
+</ul>
+</div>
+<div style="background: rgba(76, 175, 80, 0.08); border-left: 6px solid #4CAF50; padding: 14px 18px; border-radius: 8px; margin-bottom: 14px;">
+<h3 style="margin: 0 0 8px 0; color: #4CAF50; font-size: 19px;">⭐ Neu in Version 5.1.2 (Aktuelles Update)</h3>
+<ul style="margin: 0; padding-left: 20px;">
+<li style="margin-bottom: 6px;">
+<strong>📅 Intelligente Datumserkennung (Geplant vs. Gebucht):</strong><br>
+Zukünftige Buchungen werden vollautomatisch als <em>🎯 Geplant</em> gekennzeichnet. Buchungen mit heutigem oder vergangenem Datum werden automatisch als <em>✅ Gebucht</em> verbucht.
+</li>
+<li style="margin-bottom: 6px;">
+<strong>🛠️ Vollständige Bearbeitbarkeit aller Felder:</strong><br>
+Sowohl bei normalen Buchungen als auch bei Daueraufträgen können ab sofort ausnahmslos alle Details (Art, Betrag, Datum, Konto, Haupt-/Unterkategorie, Notiz, Intervall, Wochentag, Monat, Status) nachträglich bearbeitet werden.
+</li>
+</ul>
+</div>
+<div style="background: rgba(76, 175, 80, 0.08); border-left: 6px solid #4CAF50; padding: 14px 18px; border-radius: 8px; margin-bottom: 14px;">
+<h3 style="margin: 0 0 8px 0; color: #4CAF50; font-size: 19px;">⭐ Neu in Version 5.1.1 (Aktuelles Update)</h3>
+<ul style="margin: 0; padding-left: 20px;">
+<li style="margin-bottom: 6px;">
+<strong>🏪 Unterkategorien direkt in der Übersicht:</strong><br>
+Jede Buchung zeigt jetzt sowohl die Hauptkategorie als auch das genaue Geschäft an (z. B. <em>Lebensmittel, Supermarkt &amp; Discounter › Rewe</em>).
+</li>
+<li style="margin-bottom: 6px;">
+<strong>🌐 Universelles Feedback für alle Computer:</strong><br>
+Vorschläge und neue Kategorien können jetzt von jedem beliebigen Computer und Browser live an den Entwickler übertragen werden.
+</li>
+<li style="margin-bottom: 6px;">
+<strong>✏️ Unterkategorien im Bearbeiten-Dialog:</strong><br>
+Beim Ändern einer Buchung kann die Unterkategorie jetzt direkt angepasst werden.
+</li>
+</ul>
+</div>
+<div style="background: rgba(156, 39, 176, 0.08); border-left: 6px solid #9c27b0; padding: 14px 18px; border-radius: 8px; margin-bottom: 14px;">
+<h3 style="margin-top: 0; margin-bottom: 10px; font-size: 19px; color: #9c27b0;">🌟 Das ist neu in Version 5.1.0</h3>
+ 
+<ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px;">
+<li>
+<strong>🛒 Über 200 Kategorien & Geschäfte (Zweistufiges System):</strong><br>
+ Wähle jetzt erst die Hauptkategorie und dann direkt den passenden Laden oder das Detail (z. B. Aldi Nord/Süd, Lidl, Rewe, Edeka, Kaufland, dm, Rossmann, Streaming, Gaming, Wohnen, Gesundheit, Hilfsmittel, Taschengeld, Spenden u.v.m.).
+</li>
+<li>
+<strong>🔍 Blitzschnelle Live-Suche:</strong><br>
+ Tippe einfach ein paar Buchstaben eines Ladens oder Begriffs (z. B. „Rewe“, „Netflix“, „Tanken“, „Taschengeld“, „IKEA“), und die App wählt sofort automatisch die passende Haupt- und Unterkategorie.
+</li>
+<li>
+<strong>Eigene Kategorien & Läden hinzufügen (Reiter 5):</strong><br>
+ Fehlt dir ein Geschäft oder eine Kategorie? Du kannst jetzt jederzeit eigene Haupt- und Unterkategorien direkt in der App erstellen. Sie werden sofort lokal gespeichert und automatisch an den Entwickler übermittelt.
+</li>
+<li>
+<strong>Symbole & Emojis komplett abschaltbar (Reiner Textmodus für NVDA):</strong><br>
+ In Reiter 5 (Einstellungen) kannst du mit einem Klick alle Symbole und Emojis ausschalten. Die gesamte App schaltet dann in einen 100% reinen, emoji-freien Klartextmodus um – perfekt für Screenreader (NVDA).
+</li>
+<li>
+<strong>💡 Deine Wünsche & Feedback direkt senden:</strong><br>
+ In Reiter 5 kannst du jederzeit Ideen oder Vorschläge eingeben und mit einem Klick direkt abschicken.
+</li>
+<li>
+<strong>📅 Neue Zeiträume für Daueraufträge:</strong><br>
+ Regelmäßige Kosten kannst du jetzt auch bequem<strong>alle 3 Monate (vierteljährlich)</strong>oder<strong>alle 6 Monate (halbjährlich)</strong>automatisch einplanen.
+</li>
+<li>
+<strong>🔄 100% Abwärtskompatibilität mit älteren Sicherungen & GitHub-Versionen:</strong><br>
+ Sicherungsdateien aus früheren Versionen, hex-kodierte Tresore oder ältere Formate werden beim Import automatisch erkannt, repariert und nahtlos geladen.
+</li>
+<li>
+<strong>🛡 Zuverlässiger & dauerhafter Speicher:</strong><br>
+ Deine eingetragenen Buchungen, Kontostände und Sparpläne bleiben auf diesem Computer dauerhaft und sicher erhalten.
+</li>
+</ul>
+</div>
+</div>
+<div style="margin-top: 18px; border-top: 2px solid var(--border-color); padding-top: 14px; display: flex; justify-content: flex-end; align-items: center;">
+<button type="button" class="btn btn-primary" id="btn-close-changelog" onclick="closeChangelogModal()" style="width: 100%; font-size: 17px; padding: 12px 24px;">
+<span><strong>Schließen &amp; Weiter zur PIN-Eingabe (Enter)</strong></span>
+</button>
+</div>
+</div>
+</div>
+
+<!-- =========================================================================
+ 1. AES-256 PIN / PASSWORT SPERRBILDSCHIRM
+ ========================================================================= -->
+<div id="lock-screen" class="lock-screen-overlay" role="dialog" aria-modal="true" aria-labelledby="lock-heading">
+<div class="lock-card">
+<div class="lock-icon" aria-hidden="true">🛡</div>
+<h1 id="lock-heading" tabindex="-1">Sicherer AES-256 Zugang</h1>
+<p id="lock-instructions" class="lock-desc">Deine Finanzdaten sind auf diesem Computer geschützt. Bitte gib deine PIN oder dein Passwort ein:</p>
+ 
+<form id="lock-form" onsubmit="handlePinSubmit(event)">
+<div class="form-group">
+<label for="pin-input" class="field-label"><strong id="pin-input-label">PIN oder Passwort:</strong></label>
+<div style="display: flex; gap: 8px; align-items: stretch;">
+<input type="password" id="pin-input" class="large-input pin-field" maxlength="30" placeholder="z. B. 1234" autocomplete="off" autofocus required style="flex: 1;">
+<button type="button" class="btn btn-secondary" onclick="togglePinVisibility()" title="PIN im Klartext anzeigen / verbergen" aria-label="PIN im Klartext anzeigen oder verbergen" style="white-space: nowrap; padding: 0 16px;">
+<span id="pin-toggle-icon">👁 Anzeigen</span>
+</button>
+</div>
+</div>
+
+<div id="pin-error-msg" class="error-box" role="alert" style="display: none;"></div>
+
+<div class="lock-actions" style="margin-top: 14px;">
+<button type="submit" class="btn btn-primary" id="btn-unlock" style="width: 100%;">
+<span id="btn-unlock-text">🔓<strong>Entschlüsseln & Öffnen</strong>(Enter)</span>
+</button>
+</div>
+<div style="margin-top: 10px;">
+  <button type="button" id="btn-biometric-unlock" class="btn btn-secondary" onclick="BiometricAuth.authenticateAndUnlock()" style="width: 100%; font-size: 16px; padding: 12px; background: rgba(76, 175, 80, 0.12); border: 2px solid #2E7D32; color: #1B5E20; display: none; font-weight: bold;">
+    <span>👆 <strong>Mit Fingerabdruck / Biometrie entsperren</strong></span>
+  </button>
+</div>
+</form>
+<div id="lock-sync-section" class="lock-sync-box" style="margin-top: 16px; background: rgba(33, 150, 243, 0.08); border: 2px solid #2196F3; border-radius: 10px; padding: 14px; text-align: center;">
+  <div style="font-size: 16px; font-weight: bold; color: #1976D2; margin-bottom: 4px;">
+    📱 Daten vom Computer übertragen (Smartphone-Sync)
+  </div>
+  <p style="font-size: 13px; color: var(--text-muted, #555); margin: 0 0 12px 0;">
+    Übertrage deine Finanzdaten direkt vom PC auf dieses Smartphone – auch ohne vorherige PIN-Einrichtung!
+  </p>
+  <div id="lock-sync-connected" style="display: none; background: rgba(76, 175, 80, 0.12); border: 2px solid #2E7D32; border-radius: 8px; padding: 14px; text-align: center; margin-bottom: 8px;">
+    <div style="font-size: 17px; font-weight: bold; color: #1B5E20; margin-bottom: 4px;">
+      🟢 Verbunden mit Computer (<span id="lock-sync-connected-dev">PC</span>)
+    </div>
+    <div style="font-size: 13px; color: #2E7D32; margin-bottom: 10px;">
+      Zuletzt synchronisiert: <strong id="lock-sync-connected-time">Heute</strong>
+    </div>
+    <div id="lock-sync-status-connected" aria-live="polite" style="font-size: 13px; font-weight: bold; color: #1565C0; margin-bottom: 8px; padding: 6px 10px; background: rgba(255,255,255,0.9); border-radius: 4px; border: 1px solid #BBDEFB;">
+      🟢 Bereit für Live-Synchronisation
+    </div>
+    <button type="button" class="btn btn-secondary" onclick="disconnectSyncPairing()" style="font-size: 13px; padding: 8px 14px; width: 100%;">
+      🔄 <strong>Verbindung trennen / Neu koppeln</strong>
+    </button>
+  </div>
+
+  <div id="lock-sync-unconnected">
+    <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px;">
+      <!-- GERÄTENAME -->
+      <div style="background: #fff; border: 2px solid #90CAF9; border-radius: 8px; padding: 10px 12px; text-align: left;">
+        <label for="lock-sync-device-name" style="font-size: 12px; color: #555; font-weight: bold; display: block; margin-bottom: 4px;">
+          1. GERÄTENAME (am PC eingeben):
+        </label>
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+          <input type="text" id="lock-sync-device-name" readonly value="---"
+                 aria-label="Gerätename. Mit TalkBack Zeichen für Zeichen durchwischen zum Buchstabieren oder den Buchstabier-Button drücken."
+                 style="font-size: 20px; font-weight: bold; color: #0D47A1; letter-spacing: 2px; font-family: monospace; flex: 1; min-width: 140px; padding: 6px 10px; border: 1px solid #BBDEFB; border-radius: 4px; background: #E3F2FD; cursor: pointer;"
+                 onclick="this.select()" />
+          <button type="button" class="btn btn-secondary" onclick="spellOutText(document.getElementById('lock-sync-device-name').value, 'Gerätename')"
+                  aria-label="Gerätename Buchstabe für Buchstabe vorlesen" style="font-size: 13px; padding: 6px 10px; white-space: nowrap;">
+            🔊 <strong>Buchstabieren</strong>
+          </button>
+          <button type="button" class="btn btn-secondary" onclick="copyToClipboard(document.getElementById('lock-sync-device-name').value, 'Gerätename')"
+                  aria-label="Gerätename kopieren" style="font-size: 13px; padding: 6px 10px; white-space: nowrap;">
+            📋 <strong>Kopieren</strong>
+          </button>
+        </div>
+      </div>
+      <!-- KOPPLUNGSCODE -->
+      <div style="background: #fff; border: 2px solid #A5D6A7; border-radius: 8px; padding: 10px 12px; text-align: left;">
+        <label for="lock-sync-code" style="font-size: 12px; color: #555; font-weight: bold; display: block; margin-bottom: 4px;">
+          2. KOPPLUNGSCODE (am PC eingeben):
+        </label>
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+          <input type="text" id="lock-sync-code" readonly value="--- ---"
+                 aria-label="Kopplungscode. Mit TalkBack Zeichen für Zeichen durchwischen zum Buchstabieren oder den Buchstabier-Button drücken."
+                 style="font-size: 22px; font-weight: bold; color: #1B5E20; letter-spacing: 3px; font-family: monospace; flex: 1; min-width: 140px; padding: 6px 10px; border: 1px solid #C8E6C9; border-radius: 4px; background: #E8F5E9; cursor: pointer;"
+                 onclick="this.select()" />
+          <button type="button" class="btn btn-secondary" onclick="spellOutText(document.getElementById('lock-sync-code').value, 'Kopplungscode')"
+                  aria-label="Kopplungscode Ziffer für Ziffer vorlesen" style="font-size: 13px; padding: 6px 10px; white-space: nowrap;">
+            🔊 <strong>Buchstabieren</strong>
+          </button>
+          <button type="button" class="btn btn-secondary" onclick="copyToClipboard(document.getElementById('lock-sync-code').value, 'Kopplungscode')"
+                  aria-label="Kopplungscode kopieren" style="font-size: 13px; padding: 6px 10px; white-space: nowrap;">
+            📋 <strong>Kopieren</strong>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div id="lock-sync-status" aria-live="polite" style="font-size: 13px; font-weight: bold; color: #1565C0; margin-bottom: 8px; padding: 8px 12px; background: rgba(255,255,255,0.9); border-radius: 4px; border: 1px solid #BBDEFB;">
+      🟢 Warte auf Signal vom Computer...
+    </div>
+    <button type="button" class="btn btn-secondary" onclick="generateNewSyncCode()" style="font-size: 13px; padding: 8px 14px; width: 100%;">
+      🔄 <strong>Neuen Kopplungscode erzeugen</strong>
+    </button>
+  </div>
+</div>
+
+<div class="lock-restore-action" style="margin-top: 14px; text-align: center; display: flex; flex-direction: column; gap: 8px;">
+<label class="btn btn-secondary" style="width: 100%; cursor: pointer; display: block; box-sizing: border-box;">
+<span>📥<strong>Alte Sicherung oder Daten-Datei importieren</strong>(.json / .vault)</span>
+<input type="file" accept=".json,.vault,.bak" onchange="importEncryptedBackup(event)" style="display: none;">
+</label>
+<button type="button" class="btn btn-secondary" onclick="resetVaultSetup()" style="width: 100%; font-size: 14px; opacity: 0.85;">
+<span>🔄<strong>PIN vergessen / Neuen leeren Tresor einrichten</strong></span>
+</button>
+<button type="button" class="btn btn-secondary" onclick="openChangelogModal(true)" style="width: 100%; font-size: 14px; opacity: 0.9;">
+<span>📜<strong>Was ist neu in diesem Update? (Änderungsprotokoll)</strong></span>
+</button>
+</div>
+
+<div class="privacy-guarantee-box">
+<p>🔒<strong>100% DSGVO & EU-Datenschutz:</strong>Alle Daten bleiben ausschließlich auf deinem Computer und werden niemals an Server oder Fremde übertragen.</p>
+</div>
+
+<div class="pin-hint-box" id="first-time-hint" style="display: none;">
+<p>💡<em>Erster Start: Lege jetzt deine Wunsch-PIN fest (z. B. 1234 oder dein sicheres Passwort).</em></p>
+</div>
+</div>
+</div>
+
+<!-- =========================================================================
+ 2. MODAL DIALOG: BUCHUNG BEARBEITEN
+ ========================================================================= -->
+<div id="edit-tx-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="edit-modal-heading" style="display: none;">
+<div class="modal-dialog-box" style="max-width: 640px;">
+<h2 id="edit-modal-heading" tabindex="-1">Buchung bearbeiten</h2>
+<p class="field-hint">Passe hier alle Details deiner Buchung vollständig an:</p>
+ 
+<form id="form-edit-tx" onsubmit="saveEditedTransaction(event)" class="accessible-form" style="margin-top: 16px;">
+<input type="hidden" id="edit-tx-id">
+
+<div class="form-row-2">
+  <div class="form-group">
+    <label for="edit-tx-type" class="field-label"><strong>Art der Buchung:</strong></label>
+    <select id="edit-tx-type" class="large-select" onchange="onEditTxTypeChange()">
+      <option value="expense">Ausgabe</option>
+      <option value="income">Einnahme</option>
+      <option value="transfer">Umbuchung</option>
+    </select>
+  </div>
+  <div class="form-group">
+    <label for="edit-tx-amount" class="field-label"><strong>Betrag in Euro (€):</strong><span class="required-star">*</span></label>
+    <input type="number" step="0.01" min="0.01" id="edit-tx-amount" class="large-input" required>
+  </div>
+</div>
+
+<div class="form-row-2">
+  <div class="form-group">
+    <label for="edit-tx-date" class="field-label"><strong>Datum:</strong><span class="required-star">*</span></label>
+    <input type="date" id="edit-tx-date" class="large-input" onchange="onEditTxDateChange()" required>
+  </div>
+  <div class="form-group">
+    <label for="edit-tx-planned" class="field-label"><strong>Status:</strong></label>
+    <select id="edit-tx-planned" class="large-select">
+      <option value="false">Bereits gebucht / erledigt</option>
+      <option value="true">Geplant für die Zukunft</option>
+    </select>
+  </div>
+</div>
+
+<div id="edit-tx-single-account-group" class="form-group">
+  <label for="edit-tx-account" class="field-label"><strong>Konto:</strong></label>
+  <select id="edit-tx-account" class="large-select">
+    <option value="bank">Bankkonto / Girokonto</option>
+    <option value="paypal">PayPal Guthaben</option>
+    <option value="savings">Tagesgeldkonto</option>
+    <option value="cash">Bargeld</option>
+  </select>
+</div>
+
+<div id="edit-tx-transfer-accounts-group" class="form-row-2" style="display: none;">
+  <div class="form-group">
+    <label for="edit-tx-from" class="field-label"><strong>Von Konto:</strong></label>
+    <select id="edit-tx-from" class="large-select">
+      <option value="bank">Bankkonto / Girokonto</option>
+      <option value="paypal">PayPal Guthaben</option>
+      <option value="savings">Tagesgeldkonto</option>
+      <option value="cash">Bargeld</option>
+    </select>
+  </div>
+  <div class="form-group">
+    <label for="edit-tx-to" class="field-label"><strong>Auf Konto:</strong></label>
+    <select id="edit-tx-to" class="large-select">
+      <option value="savings">Tagesgeldkonto</option>
+      <option value="bank">Bankkonto / Girokonto</option>
+      <option value="paypal">PayPal Guthaben</option>
+      <option value="cash">Bargeld</option>
+    </select>
+  </div>
+</div>
+
+<div id="edit-tx-category-section">
+  <div class="form-group">
+    <label for="edit-tx-cat-search" class="field-label"><strong>Kategorie-Schnellsuche:</strong></label>
+    <input type="text" id="edit-tx-cat-search" class="large-input" placeholder="Tippe z. B. Rewe, Miete, Gehalt..." oninput="handleEditCategorySearch()">
+  </div>
+  <div class="form-row-2">
+    <div class="form-group">
+      <label for="edit-tx-category" class="field-label"><strong>Hauptkategorie:</strong></label>
+      <select id="edit-tx-category" class="large-select" onchange="onEditMainCategoryChange()">
+      </select>
+    </div>
+    <div class="form-group">
+      <label for="edit-tx-subcategory" class="field-label"><strong>Unterkategorie / Laden:</strong></label>
+      <select id="edit-tx-subcategory" class="large-select">
+      </select>
+    </div>
+  </div>
+</div>
+
+<div class="form-group">
+  <label for="edit-tx-desc" class="field-label"><strong>Beschreibung / Notiz:</strong></label>
+  <input type="text" id="edit-tx-desc" class="large-input" placeholder="z. B. Wocheneinkauf, Geschenk...">
+</div>
+
+<div class="form-actions" style="margin-top: 14px;">
+  <button type="submit" class="btn btn-primary">
+    <span><strong>Änderungen speichern</strong> (Enter)</span>
+  </button>
+  <button type="button" class="btn btn-secondary" onclick="closeEditModal()">
+    <span>Abbrechen</span>
+  </button>
+</div>
+</form>
+</div>
+</div>
+
+<!-- =========================================================================
+ 3. MODAL DIALOG: DAUERAUFTRAG / SPARPLAN BEARBEITEN
+ ========================================================================= -->
+<div id="edit-rec-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="edit-rec-heading" style="display: none;">
+<div class="modal-dialog-box" style="max-width: 640px;">
+<h2 id="edit-rec-heading" tabindex="-1">Dauerauftrag / Sparplan bearbeiten</h2>
+<p class="field-hint">Passe hier alle Details deiner regelmäßigen Buchung vollständig an:</p>
+ 
+<form id="form-edit-rec" onsubmit="saveEditedRecurring(event)" class="accessible-form" style="margin-top: 16px;">
+<input type="hidden" id="edit-rec-id">
+
+<div class="form-row-2">
+  <div class="form-group">
+    <label for="edit-rec-type" class="field-label"><strong>Art des Dauerauftrags:</strong></label>
+    <select id="edit-rec-type" class="large-select" onchange="onEditRecTypeChange()">
+      <option value="expense">Regelmäßige Ausgabe</option>
+      <option value="income">Regelmäßige Einnahme</option>
+      <option value="transfer">Dauerhafter Sparplan (Umbuchung)</option>
+    </select>
+  </div>
+  <div class="form-group">
+    <label for="edit-rec-amount" class="field-label"><strong>Betrag in Euro (€):</strong><span class="required-star">*</span></label>
+    <input type="number" step="0.01" min="0.01" id="edit-rec-amount" class="large-input" required>
+  </div>
+</div>
+
+<div class="form-group">
+  <label for="edit-rec-name" class="field-label"><strong>Name / Bezeichnung:</strong><span class="required-star">*</span></label>
+  <input type="text" id="edit-rec-name" class="large-input" placeholder="z. B. Miete, Netflix, Notgroschen Sparplan..." required>
+</div>
+
+<div class="form-row-2">
+  <div class="form-group">
+    <label for="edit-rec-interval" class="field-label"><strong>Intervall / Häufigkeit:</strong></label>
+    <select id="edit-rec-interval" class="large-select" onchange="onEditRecIntervalChange()">
+      <option value="monthly">Monatlich</option>
+      <option value="quarterly">Alle 3 Monate (Quartalsweise)</option>
+      <option value="halfyear">Alle 6 Monate (Halbjährlich)</option>
+      <option value="yearly">Jährlich (1x im Jahr)</option>
+      <option value="weekly">Wöchentlich (Jede Woche)</option>
+    </select>
+  </div>
+  <div class="form-group">
+    <label for="edit-rec-active" class="field-label"><strong>Status:</strong></label>
+    <select id="edit-rec-active" class="large-select">
+      <option value="true">Aktiv (wird berechnet)</option>
+      <option value="false">Pausiert (vorübergehend ausgesetzt)</option>
+    </select>
+  </div>
+</div>
+
+<div id="edit-rec-day-group" class="form-group">
+  <label for="edit-rec-day" class="field-label"><strong>Tag im Monat (1 - 31):</strong></label>
+  <input type="number" min="1" max="31" id="edit-rec-day" class="large-input" value="1">
+</div>
+
+<div id="edit-rec-weekday-group" class="form-group" style="display: none;">
+  <label for="edit-rec-weekday" class="field-label"><strong>Wochentag:</strong></label>
+  <select id="edit-rec-weekday" class="large-select">
+    <option value="1">Jeden Montag</option>
+    <option value="2">Jeden Dienstag</option>
+    <option value="3">Jeden Mittwoch</option>
+    <option value="4">Jeden Donnerstag</option>
+    <option value="5" selected>Jeden Freitag</option>
+    <option value="6">Jeden Samstag</option>
+    <option value="0">Jeden Sonntag</option>
+  </select>
+</div>
+
+<div id="edit-rec-yearly-month-group" class="form-group" style="display: none;">
+  <label for="edit-rec-yearly-month" class="field-label"><strong>In welchem Monat jedes Jahr?</strong></label>
+  <select id="edit-rec-yearly-month" class="large-select">
+    <option value="0">Januar</option>
+    <option value="1">Februar</option>
+    <option value="2">März</option>
+    <option value="3">April</option>
+    <option value="4">Mai</option>
+    <option value="5">Juni</option>
+    <option value="6">Juli</option>
+    <option value="7">August</option>
+    <option value="8">September</option>
+    <option value="9">Oktober</option>
+    <option value="10">November</option>
+    <option value="11">Dezember</option>
+  </select>
+</div>
+
+<div id="edit-rec-single-account-group" class="form-group">
+  <label for="edit-rec-account" class="field-label"><strong>Konto:</strong></label>
+  <select id="edit-rec-account" class="large-select">
+    <option value="bank">Bankkonto / Girokonto</option>
+    <option value="paypal">PayPal Guthaben</option>
+    <option value="savings">Tagesgeldkonto</option>
+    <option value="cash">Bargeld</option>
+  </select>
+</div>
+
+<div id="edit-rec-transfer-accounts-group" class="form-row-2" style="display: none;">
+  <div class="form-group">
+    <label for="edit-rec-from" class="field-label"><strong>Von Konto:</strong></label>
+    <select id="edit-rec-from" class="large-select">
+      <option value="bank">Bankkonto / Girokonto</option>
+      <option value="paypal">PayPal Guthaben</option>
+      <option value="savings">Tagesgeldkonto</option>
+      <option value="cash">Bargeld</option>
+    </select>
+  </div>
+  <div class="form-group">
+    <label for="edit-rec-to" class="field-label"><strong>Auf Konto:</strong></label>
+    <select id="edit-rec-to" class="large-select">
+      <option value="savings">Tagesgeldkonto</option>
+      <option value="bank">Bankkonto / Girokonto</option>
+      <option value="paypal">PayPal Guthaben</option>
+      <option value="cash">Bargeld</option>
+    </select>
+  </div>
+</div>
+
+<div id="edit-rec-category-section">
+  <div class="form-row-2">
+    <div class="form-group">
+      <label for="edit-rec-category" class="field-label"><strong>Hauptkategorie:</strong></label>
+      <select id="edit-rec-category" class="large-select" onchange="onEditRecMainCategoryChange()">
+      </select>
+    </div>
+    <div class="form-group">
+      <label for="edit-rec-subcategory" class="field-label"><strong>Unterkategorie / Laden:</strong></label>
+      <select id="edit-rec-subcategory" class="large-select">
+      </select>
+    </div>
+  </div>
+</div>
+
+<div class="form-actions" style="margin-top: 14px;">
+  <button type="submit" class="btn btn-primary">
+    <span><strong>Dauerauftrag speichern</strong> (Enter)</span>
+  </button>
+  <button type="button" class="btn btn-secondary" onclick="closeEditRecModal()">
+    <span>Abbrechen</span>
+  </button>
+</div>
+</form>
+</div>
+</div>
+
+<!-- =========================================================================
+ MODAL DIALOG: KONTO ANLEGEN / BEARBEITEN
+ ========================================================================= -->
+<div id="account-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="account-modal-heading" style="display: none;">
+<div class="modal-dialog-box" style="max-width: 600px;">
+<h2 id="account-modal-heading" tabindex="-1">Konto verwalten</h2>
+<p class="field-hint">Lege hier ein neues Konto an oder passe ein bestehendes Konto an:</p>
+ 
+<form id="form-account" onsubmit="saveAccount(event)" class="accessible-form" style="margin-top: 16px;">
+<input type="hidden" id="account-modal-id">
+
+<div class="form-group">
+  <label for="account-modal-name" class="field-label"><strong>Name des Kontos:</strong><span class="required-star">*</span></label>
+  <input type="text" id="account-modal-name" class="large-input" placeholder="z. B. ING Girokonto, Trade Republic Depot, Notgroschen..." required>
+</div>
+
+<div class="form-row-2">
+  <div class="form-group">
+    <label for="account-modal-type" class="field-label"><strong>Art des Kontos:</strong><span class="required-star">*</span></label>
+    <select id="account-modal-type" class="large-select" onchange="onAccountTypeSelectChange()" required>
+      <option value="bank">Bankkonto / Girokonto</option>
+      <option value="credit">Kreditkarte / Debitkarte</option>
+      <option value="paypal">PayPal &amp; Online-Zahlungsdienst</option>
+      <option value="savings">Tagesgeld, Festgeld &amp; Sparkonto</option>
+      <option value="cash">Bargeld &amp; Portemonnaie</option>
+      <option value="depot">Depot, Wertpapiere &amp; ETFs</option>
+      <option value="crypto">Krypto &amp; Web3 Wallet</option>
+      <option value="loan">Bausparvertrag, Kredit &amp; Darlehen</option>
+      <option value="other">Sonstiges Konto / Guthabenkarte</option>
+    </select>
+  </div>
+  <div class="form-group">
+    <label for="account-modal-balance" class="field-label"><strong>Startguthaben in Euro (€):</strong></label>
+    <input type="number" step="0.01" id="account-modal-balance" class="large-input" placeholder="0,00" value="0.00">
+  </div>
+</div>
+
+<div class="form-group">
+  <label for="account-modal-hint" class="field-label"><strong>Hinweis / Verwendung (optional):</strong></label>
+  <input type="text" id="account-modal-hint" class="large-input" placeholder="z. B. Miete &amp; Gehalt, Notgroschen, Taschengeld...">
+</div>
+
+<div class="form-actions" style="margin-top: 16px;">
+  <button type="submit" class="btn btn-primary" id="btn-save-account">
+    <span><strong>Konto speichern</strong> (Enter)</span>
+  </button>
+  <button type="button" class="btn btn-secondary" onclick="closeAccountModal()">
+    <span>Abbrechen</span>
+  </button>
+</div>
+</form>
+</div>
+</div>
+
+<!-- =========================================================================
+ MODAL DIALOG: BANK-KONTOAUSZUG CSV VORSCHAU & IMPORT
+ ========================================================================= -->
+<div id="csv-preview-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="csv-modal-heading" style="display: none;">
+<div class="modal-dialog-box" style="max-width: 900px;">
+<h2 id="csv-modal-heading" tabindex="-1">Bank-Kontoauszug Vorschau &amp; Import</h2>
+<p class="field-hint">Überprüfe hier die erkannten Buchungen vor dem endgültigen Speichern. Du kannst Zeilen abwählen oder Kategorien anpassen:</p>
+ 
+<div id="csv-preview-table-container" style="max-height: 50vh; overflow-y: auto; margin-top: 14px; border: 1px solid var(--border-color); border-radius: 6px;">
+  <!-- Dynamisch befüllt -->
+</div>
+
+<div class="form-actions" style="margin-top: 16px;">
+  <button type="button" class="btn btn-primary" onclick="confirmCsvImport()" style="background-color: #4CAF50; border-color: #388E3C; flex: 2;">
+    <span>📥 <strong>Ausgewählte Buchungen importieren</strong></span>
+  </button>
+  <button type="button" class="btn btn-secondary" onclick="closeCsvPreviewModal()" style="flex: 1;">
+    <span>Abbrechen</span>
+  </button>
+</div>
+</div>
+</div>
+
+<!-- =========================================================================
+ MODAL DIALOG: DRUCKBARER MONATS- & JAHRESBERICHT (PDF)
+ ========================================================================= -->
+<div id="print-report-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="print-report-heading" style="display: none;">
+<div class="modal-dialog-box" style="max-width: 860px;">
+<div class="no-print" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--border-color); padding-bottom: 12px; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+  <h2 id="print-report-heading" tabindex="-1" style="margin: 0;">Finanzbericht &amp; Nachweis</h2>
+  <div style="display: flex; gap: 8px;">
+    <button type="button" class="btn btn-primary" onclick="triggerPrintReport()" style="background-color: #2196F3;">
+      <span>🖨️ <strong>Jetzt Drucken / Als PDF speichern</strong></span>
+    </button>
+    <button type="button" class="btn btn-secondary" onclick="closePrintReportModal()">
+      <span>Schließen</span>
+    </button>
+  </div>
+</div>
+
+<div class="no-print" style="margin-bottom: 14px; display: flex; gap: 10px;">
+  <label style="font-weight: bold; align-self: center;">Berichts-Format:</label>
+  <button type="button" class="btn btn-secondary" id="btn-report-mode-standard" onclick="switchPrintReportMode('standard')" style="font-weight: bold;">
+    📊 Standard Finanzbericht
+  </button>
+  <button type="button" class="btn btn-secondary" id="btn-report-mode-tax" onclick="switchPrintReportMode('tax_official')">
+    🏛️ Behörden- &amp; Steuer-Format
+  </button>
+</div>
+
+<div id="print-report-content" style="background: #ffffff; color: #000000; padding: 20px; border-radius: 6px; font-family: sans-serif; line-height: 1.5;">
+  <!-- Dynamisch generiert -->
+</div>
+</div>
+</div>
+
+
+
+<!-- =========================================================================
+ 4. HAUPTANWENDUNG
+ ========================================================================= -->
+<div id="app-wrapper" style="display: none;">
+
+<!-- Schnellsprunglinks für NVDA -->
+<nav class="skip-links" aria-label="Schnellnavigation">
+<a href="#main-nav-tabs" class="skip-link">Zur Menüauswahl springen</a>
+<a href="#time-picker-bar" class="skip-link">Zur Zeitraumauswahl springen</a>
+<a href="#view-content-area" class="skip-link">Direkt zum Hauptinhalt springen</a>
+</nav>
+
+<!-- Header -->
+<header class="app-header" role="banner">
+<div class="header-content">
+<div class="brand">
+<span class="app-icon" aria-hidden="true">💶</span>
+<div>
+<h1>Meine Finanzen & Haushaltsbuch</h1>
+<span class="security-badge" aria-label="Sicherheitsstatus: AES-256 Verschlüsselt">🔒 AES-256 Verschlüsselt & DSGVO-Konform</span>
+</div>
+</div>
+<div class="header-controls">
+<span id="today-indicator-badge" class="today-badge" aria-label="Heutiges Datum">
+ 📅 Heute:<strong id="today-date-text">Lade Datum...</strong></span>
+<button class="btn btn-lock" onclick="lockApp()" title="App sofort sperren (Taste L)">
+<span aria-hidden="true">🔒</span>
+<span>Sperren (L)</span>
+</button>
+</div>
+</div>
+</header>
+
+<!-- =========================================================================
+ HAUPTNAVIGATION (7 TABS)
+ ========================================================================= -->
+<nav class="nav-tabs-wrapper" aria-label="Hauptmenü" id="main-nav-tabs">
+<div class="tab-list" role="tablist">
+<button id="tab-overview" data-emoji="📊" class="tab-btn active" role="tab" aria-selected="true" aria-controls="view-overview" onclick="switchView('overview')" tabindex="0">
+<span class="tab-key-hint" aria-hidden="true">1</span>
+<span>📊<strong>Übersicht &amp; Zeiträume</strong></span>
+</button>
+<button id="tab-expense" data-emoji="🔴" class="tab-btn" role="tab" aria-selected="false" aria-controls="view-expense" onclick="switchView('expense')" tabindex="-1">
+<span class="tab-key-hint" aria-hidden="true">2</span>
+<span>🔴<strong>Ausgabe eintragen / planen</strong></span>
+</button>
+<button id="tab-income" data-emoji="🟢" class="tab-btn" role="tab" aria-selected="false" aria-controls="view-income" onclick="switchView('income')" tabindex="-1">
+<span class="tab-key-hint" aria-hidden="true">3</span>
+<span>🟢<strong>Einnahme eintragen / planen</strong></span>
+</button>
+<button id="tab-transfer" data-emoji="🔄" class="tab-btn" role="tab" aria-selected="false" aria-controls="view-transfer" onclick="switchView('transfer')" tabindex="-1">
+<span class="tab-key-hint" aria-hidden="true">4</span>
+<span>🔄<strong>Umbuchen &amp; Sparen</strong></span>
+</button>
+<button id="tab-settings" data-emoji="⚙️" class="tab-btn" role="tab" aria-selected="false" aria-controls="view-settings" onclick="switchView('settings')" tabindex="-1">
+<span class="tab-key-hint" aria-hidden="true">5</span>
+<span>⚙️<strong>Einstellungen &amp; Backup</strong></span>
+</button>
+<button id="tab-accounts" data-emoji="💳" class="tab-btn" role="tab" aria-selected="false" aria-controls="view-accounts" onclick="switchView('accounts')" tabindex="-1">
+<span class="tab-key-hint" aria-hidden="true">6</span>
+<span>💳<strong>Konto-Optionen &amp; Konten</strong></span>
+</button>
+<button id="tab-wishlist" data-emoji="🎁" class="tab-btn" role="tab" aria-selected="false" aria-controls="view-wishlist" onclick="switchView('wishlist')" tabindex="-1">
+<span class="tab-key-hint" aria-hidden="true">7</span>
+<span>🎁<strong>Wunschliste &amp; Sparziele</strong></span>
+</button>
+<button id="tab-sync" data-emoji="📱" class="tab-btn" role="tab" aria-selected="false" aria-controls="view-sync" onclick="switchView('sync')" tabindex="-1">
+<span class="tab-key-hint" aria-hidden="true">8</span>
+<span>📱<strong>Smartphone-Sync (E2E)</strong></span>
+</button>
+</div>
+</nav>
+
+<!-- =========================================================================
+ EINHEITLICHE ZEITRAUM- & NAVIGATION LEISTE (DROPDOWN CONTROL FIELD)
+ ========================================================================= -->
+<div class="time-picker-container" id="time-picker-bar" role="region" aria-label="Zeitraum und Navigation">
+<div class="time-picker-inner">
+<div class="time-select-wrapper">
+<label for="overview-period-select" class="time-select-label">📊<strong>Zeitraum:</strong></label>
+<select id="overview-period-select" class="time-dropdown" onchange="handlePeriodDropdownChange(this.value)">
+<option value="day">📍 Tag (Tagesgenau)</option>
+<option value="week">📆 Woche (Kalenderwoche: Mo - So)</option>
+<option value="month" selected>📅 Monat (Gesamter Monat)</option>
+<option value="quarter">📊 3 Monate (Quartal)</option>
+<option value="halfyear">📈 6 Monate (Halbjahr)</option>
+<option value="year">🗓Ganzes Jahr</option>
+</select>
+</div>
+
+<div id="sub-time-navigation-wrapper" class="time-select-wrapper">
+<!-- Befüllt per JavaScript mit den Pfeiltasten und Unterauswahlen -->
+</div>
+</div>
+</div>
+
+<!-- =========================================================================
+ HAUPTINHALTSBEREICH
+ ========================================================================= -->
+<main class="main-container" id="view-content-area" role="main">
+
+<!-- =======================================================================
+ ANSICHT 1: ÜBERSICHT (TAG, MONAT, 3 MONATE, 6 MONATE, JAHR)
+ ======================================================================= -->
+<div id="view-overview" class="view-panel" role="tabpanel" aria-labelledby="tab-overview">
+ 
+<div class="month-banner">
+<h2 id="overview-month-title" class="month-banner-title">Monatsübersicht für September 2026</h2>
+<p class="month-banner-sub" id="overview-banner-subtitle">Hier siehst du deine Konten, Einnahmen, Ausgaben und dein Gesamtergebnis.</p>
+</div>
+
+<!-- LIQUIDITÄTS- & KONTODECKUNGS-WARNUNG -->
+<div id="overview-liquidity-alert" style="display: none;"></div>
+
+<!-- 1. ZUERST: KONTOSTÄNDE -->
+<section class="overview-section" aria-labelledby="section-accounts-heading">
+<h3 id="section-accounts-heading" class="section-title">1. 💳 Deine Kontostände im Detail</h3>
+ 
+<div class="accounts-grid" id="overview-accounts-grid">
+<!-- Dynamisch befüllt durch renderAccountCardBalances -->
+</div>
+  <div id="tx-search-results-banner" style="display: none; margin-top: 10px; padding: 10px 14px; background: rgba(33, 150, 243, 0.1); border-left: 5px solid #2196F3; border-radius: 6px; font-size: 14px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;" role="status" aria-live="polite">
+    <span id="tx-search-results-text" style="font-weight: 500;"></span>
+    <button type="button" class="btn btn-secondary" onclick="clearTxSearch()" style="padding: 3px 10px; font-size: 12px;">✖️ Filter aufheben</button>
+  </div>
+</section>
+
+<!-- MEHRMONATS- / JAHRES-TABELLE (WIRD BEI 3M, 6M, JAHR ANGEZEIGT) -->
+<section class="overview-section" id="section-period-breakdown" style="display: none;" aria-labelledby="period-breakdown-heading">
+<div class="section-card">
+<h3 id="period-breakdown-heading" class="section-title">📊 Monatsübersicht im gewählten Zeitraum</h3>
+<div class="table-responsive" tabindex="0">
+<table class="annual-table" id="period-summary-table">
+<thead>
+<tr>
+<th scope="col">Monat</th>
+<th scope="col" class="text-right">Einnahmen</th>
+<th scope="col" class="text-right">Ausgaben</th>
+<th scope="col" class="text-right">Ergebnis (Plus / Minus)</th>
+<th scope="col" class="text-center">Status</th>
+</tr>
+</thead>
+<tbody id="period-table-body">
+<!-- Per JS -->
+</tbody>
+</table>
+</div>
+</div>
+</section>
+
+<!-- AUSGABEN-RANGLISTE (TOP-GELDFRESSER DES MONATS) -->
+<section class="overview-section" aria-labelledby="expense-ranking-heading">
+<div class="section-card">
+<details class="accessible-accordion" id="details-expense-rankings">
+  <summary class="accordion-summary" aria-label="Ausgaben-Rangliste Größte Geldfresser des Monats ausklappen oder einklappen">
+    <span>🏆 <strong id="expense-ranking-heading">Größte Geldfresser des Monats (Ausgaben-Rangliste)</strong></span>
+  </summary>
+  <div class="accordion-content" style="padding-top: 10px;">
+    <div id="overview-expense-rankings">
+      <!-- Dynamisch befüllt -->
+    </div>
+  </div>
+</details>
+</div>
+</section>
+
+<!-- GLOBALE LIVE-SUCHE & BUCHUNGS-FILTER -->
+<section class="overview-section" aria-labelledby="tx-search-heading">
+<div class="tx-filter-bar" role="search" aria-label="Buchungen durchsuchen und filtern">
+  <div class="filter-item">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <label for="tx-search-query" class="field-label" style="font-size: 13px; margin: 0;">🔍 <strong>Intelligente Suche (Text, Betrag, Tippfehler, Datum):</strong></label>
+      <button type="button" id="btn-clear-tx-search" onclick="clearTxSearch()" style="display: none; background: none; border: none; font-size: 13px; cursor: pointer; color: #D32F2F;">✖️ Suche leeren</button>
+    </div>
+    <input type="text" id="tx-search-query" class="large-input" placeholder="z. B. Rewe, 45€, >50, 20-100, September, heute, -PayPal..." oninput="handleTxSearchFilterChange()" onkeydown="handleTxSearchKeyDown(event)" style="padding: 6px 10px; font-size: 15px;">
+    </div>
+  <div class="filter-item">
+    <label for="tx-filter-status" class="field-label" style="font-size: 13px;">🎯 <strong>Status:</strong></label>
+    <select id="tx-filter-status" class="large-select" onchange="handleTxSearchFilterChange()" style="padding: 6px 10px; font-size: 15px;">
+      <option value="all" selected>Alle Buchungen</option>
+      <option value="booked">✅ Nur Gebucht / Erledigt</option>
+      <option value="planned">🎯 Nur Geplant für die Zukunft</option>
+      <option value="recurring">🔁 Nur Daueraufträge</option>
+    </select>
+  </div>
+  <div class="filter-item">
+    <label for="tx-filter-account" class="field-label" style="font-size: 13px;">💳 <strong>Konto:</strong></label>
+    <select id="tx-filter-account" class="large-select" onchange="handleTxSearchFilterChange()" style="padding: 6px 10px; font-size: 15px;">
+      <option value="all" selected>Alle Konten</option>
+    </select>
+  </div>
+  <div class="filter-item">
+    <label for="tx-sort-order" class="field-label" style="font-size: 13px;">↕️ <strong>Sortierung:</strong></label>
+    <select id="tx-sort-order" class="large-select" onchange="handleTxSortChange()" style="padding: 6px 10px; font-size: 15px;">
+      <option value="date-desc" selected>📅 Datum: Neueste zuerst (Neu bis Alt)</option>
+      <option value="date-asc">📅 Datum: Älteste zuerst (Alt bis Neu)</option>
+      <option value="alpha-asc">🔤 Name: Alphabetisch (A bis Z)</option>
+      <option value="alpha-desc">🔤 Name: Alphabetisch (Z bis A)</option>
+      <option value="amount-desc">💶 Betrag: Höchste zuerst (Groß bis Klein)</option>
+      <option value="amount-asc">💶 Betrag: Niedrigste zuerst (Klein bis Groß)</option>
+      <option value="category-asc">🏷️ Kategorie: Alphabetisch (A bis Z)</option>
+    </select>
+  </div>
+</div>
+</section>
+
+<!-- 2. DANN: EINNAHMEN -->
+<section class="overview-section" aria-labelledby="section-income-heading">
+<div class="section-card card-income-wrap">
+<div class="card-header-flex">
+<div>
+<h3 id="section-income-heading" class="section-title" style="margin-bottom: 2px;">2. 📥 Einnahmen</h3>
+<span class="sub-counter" id="income-summary-subtext">Lade Einnahmen...</span>
+</div>
+<div class="stat-big-val" id="card-month-income" style="color: var(--accent-income);">+ 0,00 €</div>
+</div>
+
+<details class="accessible-accordion" id="details-income-list">
+<summary class="accordion-summary" aria-label="Alle Einnahmen ausklappen oder einklappen">
+<span>📋<strong id="details-income-summary-text">Alle Einnahmen anzeigen (mit Datum, Bearbeiten & Löschen)</strong></span>
+</summary>
+<div class="accordion-content" id="overview-income-items-feed">
+<!-- Wird per JS befüllt -->
+</div>
+</details>
+</div>
+</section>
+
+<!-- 3. DANN: AUSGABEN -->
+<section class="overview-section" aria-labelledby="section-expense-heading">
+<div class="section-card card-expense-wrap">
+<div class="card-header-flex">
+<div>
+<h3 id="section-expense-heading" class="section-title" style="margin-bottom: 2px;">3. 📤 Ausgaben</h3>
+<span class="sub-counter" id="expense-summary-subtext">Lade Ausgaben...</span>
+</div>
+<div class="stat-big-val" id="card-month-expense" style="color: var(--accent-expense);">- 0,00 €</div>
+</div>
+
+<details class="accessible-accordion" id="details-expense-list">
+<summary class="accordion-summary" aria-label="Alle Ausgaben ausklappen oder einklappen">
+<span>📋<strong id="details-expense-summary-text">Alle Ausgaben anzeigen (mit Datum, Bearbeiten & Löschen)</strong></span>
+</summary>
+<div class="accordion-content" id="overview-expense-items-feed">
+<!-- Wird per JS befüllt -->
+</div>
+</details>
+</div>
+</section>
+
+<!-- 3b. DANN: LAUFENDE KREDITE & RATENKÄUFE -->
+<section class="overview-section" aria-labelledby="section-credit-heading">
+<div class="section-card">
+  <div class="card-header-flex">
+    <div>
+      <h3 id="section-credit-heading" class="section-title" style="margin-bottom: 2px;">💳 Laufende Kredite, Ratenkäufe &amp; Finanzierungen</h3>
+      <span class="sub-counter" id="credit-summary-subtext">0 aktive Kredite</span>
+    </div>
+    <div class="stat-big-val" id="card-month-credit" style="color: #E65100;">0,00 € Rest</div>
+  </div>
+
+  <details class="accessible-accordion" id="details-credit-list">
+    <summary class="accordion-summary" aria-label="Alle Kredite und Ratenkäufe ausklappen oder einklappen">
+      <span>📋<strong id="details-credit-summary-text">Laufende Kredite &amp; Ratenpläne anzeigen</strong></span>
+    </summary>
+    <div class="accordion-content" id="overview-credit-items-feed" style="padding-top: 10px;">
+      <!-- Wird per JS befüllt -->
+    </div>
+  </details>
+</div>
+</section>
+
+<!-- 3c. DANN: UMBUCHUNGEN, SPARPLÄNE & DAUERAUFTRÄGE -->
+<section class="overview-section" aria-labelledby="section-transfer-heading">
+<div class="section-card card-transfer-wrap" style="border-left: 8px solid var(--accent-action, #0288D1);">
+  <div class="card-header-flex">
+    <div>
+      <h3 id="section-transfer-heading" class="section-title" style="margin-bottom: 2px;">🔄 Umbuchungen, Sparpläne &amp; Daueraufträge</h3>
+      <span class="sub-counter" id="transfer-summary-subtext">Lade Umbuchungen...</span>
+    </div>
+    <div class="stat-big-val" id="card-month-transfer" style="color: var(--accent-action, #0288D1);">0,00 €</div>
+  </div>
+
+  <details class="accessible-accordion" id="details-transfer-list">
+    <summary class="accordion-summary" aria-label="Alle Umbuchungen und Sparpläne ausklappen oder einklappen">
+      <span>📋<strong id="details-transfer-summary-text">Alle Umbuchungen &amp; Sparpläne anzeigen (mit Von/Nach-Konto, Bearbeiten &amp; Löschen)</strong></span>
+    </summary>
+    <div class="accordion-content" id="overview-transfer-items-feed" style="padding-top: 10px;">
+      <!-- Wird per JS befüllt -->
+    </div>
+  </details>
+</div>
+</section>
+
+<!-- 4. DANN: GESAMT ÜBER ALLE KONTEN & SALDO -->
+<section class="overview-section" aria-labelledby="section-total-heading">
+<div class="balance-hero-card" tabindex="0">
+<h3 id="section-total-heading" class="hero-label">4. 💰 GESAMT ÜBER ALLE KONTEN & ERGEBNIS</h3>
+<div class="hero-amount" id="card-alltime-total">0,00 €</div>
+<div class="hero-subtext" id="total-balance-sub">Verfügbares Gesamtguthaben über alle Konten</div>
+ 
+<hr class="hero-divider" aria-hidden="true">
+
+<div class="hero-secondary-row">
+<div>
+<span class="hero-sub-label" id="leftover-main-label">Ergebnis im Zeitraum:</span>
+<strong class="hero-sub-value" id="month-leftover-display">0,00 €</strong>
+</div>
+<div id="month-leftover-sub" class="hero-subtext">Einnahmen minus Ausgaben</div>
+</div>
+</div>
+</section>
+
+<!-- 5. KAUF-PLANER & SIMULATOR -->
+<section class="overview-section" aria-labelledby="section-simulator-heading">
+<div class="section-card simulator-card">
+<h3 id="section-simulator-heading" class="section-title">🛒 5. Kauf-Planer & Simulator (Was bleibt übrig, wenn ich etwas kaufe?)</h3>
+<p class="field-hint">Hier kannst du sofort ausprobieren, wie viel Geld du nach einem Kauf noch übrig hättest:</p>
+
+<div class="simulator-box">
+<div class="form-row-2">
+<div class="form-group">
+<label for="sim-item-name" class="field-label"><strong>Was möchtest du dir kaufen? (Wunsch / Anschaffung)</strong></label>
+<input type="text" id="sim-item-name" class="large-input" placeholder="z. B. Neue Schuhe, Gaming-Headset, Jacke...">
+</div>
+<div class="form-group">
+<label for="sim-item-price" class="field-label"><strong>Preis in Euro (€)</strong></label>
+<input type="number" step="0.01" min="0.01" id="sim-item-price" class="large-input" placeholder="z. B. 49.99" oninput="runPurchaseSimulation()">
+</div>
+</div>
+
+<div id="sim-result-box" class="sim-result-box">
+<p>💡<em>Gib oben einen Preis ein, um zu sehen, was nach dem Kauf von deinem Monatsgeld noch übrig bleibt.</em></p>
+</div>
+
+<div class="sim-actions" id="sim-save-action" style="display: none; margin-top: 14px;">
+<button type="button" class="btn btn-primary" onclick="saveSimulatedPurchase()">
+<span>🎯<strong>Als geplante Zukunftsausgabe übernehmen</strong></span>
+</button>
+</div>
+</div>
+</div>
+</section>
+<!-- 6. BARRIEREFREIER EINKAUFS- & KASSENRECHNER (GANZ UNTEN IN DER ÜBERSICHT) -->
+<section class="overview-section" aria-labelledby="shopping-calc-heading" style="margin-top: 24px;">
+<div class="section-card" style="border: 2px solid #4CAF50;">
+<details class="accessible-accordion" id="details-shopping-calc">
+  <summary class="accordion-summary" aria-label="Einkaufs- und Kassenrechner ausklappen oder einklappen">
+    <span>🛒 <strong id="shopping-calc-heading">Einkaufs- &amp; Kassenrechner (Sofort beim Einkaufen zusammenrechnen)</strong></span>
+  </summary>
+  <div class="accordion-content" style="padding-top: 14px;">
+    <p class="field-hint">Tippe während des Einkaufs im Supermarkt Beträge ein – die App rechnet live zusammen und bucht am Ende mit 1 Klick den fertigen Kassenzettel ab:</p>
+    <form id="form-shopping-add-item" onsubmit="handleAddShoppingItem(event)" style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px;">
+      <input type="text" id="shopping-item-name" class="large-input" placeholder="Artikel (z. B. Brot, Käse, Obst)" style="flex: 2; min-width: 160px;">
+      <input type="number" step="0.01" min="0.01" id="shopping-item-price" class="large-input" placeholder="Preis in € (z. B. 2,49)" required style="flex: 1; min-width: 120px;">
+      <button type="submit" class="btn btn-primary" style="background-color: #2E7D32; border-color: #1B5E20; white-space: nowrap;">
+        <span>➕ Artikel hinzufügen</span>
+      </button>
+    </form>
+
+    <div id="shopping-cart-table-wrapper" style="margin-top: 12px;">
+      <!-- Dynamisch befüllt -->
+    </div>
+
+    <div style="margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; justify-content: space-between;">
+      <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+        <select id="shopping-book-account" class="large-select" style="max-width: 180px;">
+          <!-- Konten -->
+        </select>
+        <select id="shopping-book-subcat" class="large-select" style="max-width: 180px;">
+          <!-- Läden -->
+        </select>
+        <button type="button" class="btn btn-primary" onclick="bookShoppingCartAsExpense()" style="background-color: #4CAF50;">
+          <span>💾 <strong>Gesamtsumme als Ausgabe buchen</strong></span>
+        </button>
+      </div>
+      <button type="button" class="btn btn-secondary" onclick="clearShoppingCart()" style="color: #f44336;">
+        <span>Warenkorb leeren</span>
+      </button>
+    </div>
+  </div>
+</details>
+</div>
+</section>
+
+
+</div>
+
+<!-- =======================================================================
+ ANSICHT 2: AUSGABE EINTRAGEN
+ ======================================================================= -->
+<div id="view-expense" class="view-panel" role="tabpanel" aria-labelledby="tab-expense" style="display: none;">
+<div class="form-container">
+<h2 class="view-heading" tabindex="-1" id="heading-expense-view" data-emoji="🔴">🔴 Ausgabe eintragen oder für die Zukunft planen</h2>
+<p class="view-sub">Trage hier getätigte Ausgaben oder<strong>geplante Anschaffungen für die Zukunft</strong>ein.</p>
+
+<form id="form-add-expense" class="accessible-form" onsubmit="handleAddExpense(event)">
+<div class="form-group">
+<label for="exp-amount" class="field-label">
+<strong>Betrag in Euro (€)</strong><span class="required-star" aria-hidden="true">* (Pflichtfeld)</span>
+</label>
+<input type="number" step="0.01" min="0.01" id="exp-amount" class="large-input" placeholder="z. B. 4,50 oder 12.99" required autofocus autocomplete="off" oninput="handleMainExpenseAmountInput()">
+</div>
+
+<div class="form-group">
+<label for="exp-frequency" class="field-label">
+<strong>Art & Häufigkeit der Ausgabe</strong>
+</label>
+<select id="exp-frequency" class="large-select" onchange="toggleExpenseFrequencyFields()">
+<option value="once" selected>Einmalige Ausgabe (Sofort oder an bestimmtem Tag bezahlt)</option>
+<option value="installment">💳 Ratenzahlung &amp; Kredit (In monatlichen Raten abbezahlen)</option>
+<option value="monthly">📅 Monatlich regelmäßig (Dauerauftrag, Miete, Abo, Fixkosten)</option>
+<option value="planned">🎯 Geplante Zukunftsausgabe (Vormerkung für später)</option>
+<option value="weekly">📅 Wöchentlich regelmäßig</option>
+<option value="quarterly">🔄 Alle 3 Monate (Quartalsweise, z. B. GEZ)</option>
+<option value="halfyear">📈 Alle 6 Monate (Halbjährlich)</option>
+<option value="yearly">🗓️ Jährlich regelmäßig (z. B. Kfz-Steuer, Jahresabo)</option>
+</select>
+</div>
+
+<!-- RATENZAHLUNGS-RECHNER -->
+<div id="exp-installment-fields" class="settings-box" style="display: none; border-left: 8px solid #FF9800; margin-top: 10px; margin-bottom: 14px; background: rgba(255, 152, 0, 0.05); padding: 14px; border-radius: 8px;">
+  <h4 style="margin-top: 0; margin-bottom: 8px; color: #E65100;">💳 Ratenkauf &amp; Finanzierungs-Rechner</h4>
+  <p style="font-size: 13px; margin: 0 0 10px 0;">Der Kaufpreis von oben wird automatisch übernommen. Wähle einfach Laufzeit und Art:</p>
+  
+  <div class="form-row-2">
+    <div class="form-group">
+      <label class="field-label"><strong>Laufzeit &amp; Raten-Intervall:</strong><span class="required-star" aria-hidden="true">*</span></label>
+      <div style="display: flex; gap: 8px;">
+        <input type="number" id="exp-installment-duration-val" class="large-input" min="1" value="12" style="max-width: 90px;" oninput="handleInstallmentCalculation()">
+        <select id="exp-installment-duration-unit" class="large-select" onchange="handleInstallmentCalculation()" style="flex: 1;">
+          <option value="months" selected>Monate (Monatliche Raten)</option>
+          <option value="weeks">Wochen (Wöchentliche Raten)</option>
+          <option value="years">Jahre (Jährliche Raten)</option>
+          <option value="days">Tage (Tägliche Raten)</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label for="exp-installment-type" class="field-label"><strong>Art der Finanzierung:</strong></label>
+      <select id="exp-installment-type" class="large-select" onchange="handleInstallmentTypeChange()">
+        <option value="ratenkauf" selected>🛒 Ratenkauf / Ratenzahlung</option>
+        <option value="kredit">🏦 Bankkredit / Ratenkredit</option>
+        <option value="finanzierung_0">🏷️ 0%-Finanzierung (Zinsfrei)</option>
+        <option value="darlehen">🤝 Privates Darlehen (Familie / Freunde)</option>
+        <option value="leasing">🚗 Leasing (Auto, E-Bike, Technik)</option>
+        <option value="dispo">💳 Dispokredit / Rahmenkredit</option>
+        <option value="sonstiges">💳 Sonstige Finanzierung</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="form-group" style="margin-top: 8px; margin-bottom: 6px;">
+    <label for="exp-installment-rate" class="field-label"><strong>Berechnete monatliche Rate (€):</strong></label>
+    <input type="number" step="0.01" min="0.01" id="exp-installment-rate" class="large-input" style="font-weight: bold; color: #D32F2F;" placeholder="0,00 €" oninput="handleInstallmentRateManualChange()">
+  </div>
+
+  <div id="exp-installment-calc-hint" style="font-size: 13px; font-weight: bold; color: #E65100; margin-top: 6px; padding: 6px 10px; background: rgba(255, 152, 0, 0.1); border-radius: 4px;" aria-live="polite">
+    Gib oben den Kaufbetrag ein.
+  </div>
+
+  <!-- AUSKLAPPBARE ZUSATZOPTIONEN (NUR BEI BEDARF, NICHT WÜST) -->
+  <details class="accessible-accordion" id="details-installment-advanced" style="margin-top: 12px; border: 1px dashed #FF9800; border-radius: 6px; padding: 6px 10px; background: rgba(255,255,255,0.7);">
+    <summary class="accordion-summary" style="font-size: 13px; cursor: pointer; color: #E65100;">
+      <span>⚙️ <strong>Weitere Optionen (Anbieter, Anzahlung, Zinsen, Schlussrate)</strong></span>
+    </summary>
+    <div class="accordion-content" style="padding-top: 10px;">
+      <div class="form-row-2">
+        <div class="form-group">
+          <label for="exp-installment-provider" class="field-label"><strong>Anbieter / Zahlungsdienst:</strong></label>
+          <select id="exp-installment-provider" class="large-select" onchange="handleInstallmentCalculation()">
+            <option value="paypal" selected>🅿️ PayPal Ratenzahlung</option>
+            <option value="klarna">🛍️ Klarna (Slice It / Flexibel)</option>
+            <option value="amazon">📦 Amazon Ratenzahlung</option>
+            <option value="santander">🏦 Santander Consumer Bank</option>
+            <option value="targobank">🏦 Targobank</option>
+            <option value="consors">🏦 Consors Finanz</option>
+            <option value="hausbank">🏛️ Hausbank (Sparkasse, VR-Bank, ING...)</option>
+            <option value="apple_mediamarkt">📱 MediaMarkt-Saturn / Apple</option>
+            <option value="privat">🤝 Privatkredit</option>
+            <option value="sonstiger">💳 Sonstiger Anbieter</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="exp-installment-downpayment" class="field-label"><strong>Anzahlung zu Beginn (€):</strong></label>
+          <input type="number" step="0.01" min="0" id="exp-installment-downpayment" class="large-input" placeholder="0,00" value="0.00" oninput="handleInstallmentCalculation()">
+        </div>
+      </div>
+
+      <div class="form-row-2" style="margin-top: 8px;">
+        <div class="form-group" id="group-installment-interest">
+          <label for="exp-installment-interest" class="field-label"><strong>Zinsen / Gebühren (optional):</strong></label>
+          <div style="display: flex; gap: 6px;">
+            <input type="number" step="0.01" min="0" id="exp-installment-interest" class="large-input" placeholder="0" oninput="handleInstallmentCalculation()" style="flex: 1;">
+            <select id="exp-installment-interest-type" class="large-select" onchange="handleInstallmentCalculation()" style="flex: 1;">
+              <option value="percent" selected>% p. a.</option>
+              <option value="euro">€ Gesamt</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group" id="group-installment-balloon">
+          <label for="exp-installment-balloon" class="field-label"><strong>Schlussrate / Restwert (€):</strong></label>
+          <input type="number" step="0.01" min="0" id="exp-installment-balloon" class="large-input" placeholder="0,00" value="0.00" oninput="handleInstallmentCalculation()">
+        </div>
+      </div>
+
+      <div class="form-row-2" style="margin-top: 8px;">
+        <div class="form-group">
+          <label for="exp-installment-first-due" class="field-label"><strong>Erste Rate fällig:</strong></label>
+          <select id="exp-installment-first-due" class="large-select">
+            <option value="now" selected>Sofort am Kauftag (Standard)</option>
+            <option value="days30">In 30 Tagen (Zahlpause)</option>
+            <option value="days60">In 60 Tagen</option>
+            <option value="days90">In 90 Tagen (3 Monate Pause)</option>
+          </select>
+        </div>
+        <div class="form-group" style="display: flex; flex-direction: column; justify-content: center;">
+          <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; margin-top: 14px; font-size: 13px;">
+            <input type="checkbox" id="exp-installment-special-repay" checked>
+            <span>Kostenlose Sondertilgung erlaubt</span>
+          </label>
+          <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; margin-top: 6px; font-size: 13px;">
+            <input type="checkbox" id="exp-installment-pause-allowed">
+            <span>Ratenpause vertraglich möglich</span>
+          </label>
+        </div>
+      </div>
+    </div>
+  </details>
+</div>
+
+<div class="form-group" id="exp-account-group">
+<label for="exp-account" class="field-label">
+<strong>Von welchem Konto bezahlen?</strong><span class="required-star" aria-hidden="true">*</span>
+</label>
+<select id="exp-account" class="large-select" required>
+<option value="bank">🏦 Bankkonto / Girokonto (EC-Karte / Lastschrift)</option>
+<option value="paypal">🅿PayPal Guthaben</option>
+<option value="cash">💵 Bargeld (Portemonnaie / Bar bezahlt)</option>
+<option value="savings">📈 Tagesgeldkonto (Vom Ersparten bezahlt)</option>
+</select>
+</div>
+
+<div class="form-group">
+<label for="exp-cat-search" class="field-label">
+<span>🔍<strong>Kategorie oder Laden schnell suchen (z. B. Aldi, Lidl, Rewe, Miete, Netflix):</strong></span>
+</label>
+<input type="text" id="exp-cat-search" class="large-input" placeholder="Tippe z. B. 'Rewe', 'Lidl', 'Aldi', 'Netflix', 'Tanken', 'Miete'..." oninput="handleCategorySearch('exp')" autocomplete="off">
+</div>
+
+<div class="form-row-2">
+<div class="form-group">
+<label for="exp-category" class="field-label">
+<strong>1. Hauptkategorie:</strong><span class="required-star" aria-hidden="true">*</span>
+</label>
+<select id="exp-category" class="large-select" onchange="onMainCategoryChange('exp')" required>
+<option value="Lebensmittel, Supermarkt & Discounter">Lebensmittel, Supermarkt & Discounter</option>
+<option value="Miete, Wohnen & Nebenkosten">Miete, Wohnen & Nebenkosten</option>
+<option value="Haushalt, Möbel, Garten & Handwerker">Haushalt, Möbel, Garten & Handwerker</option>
+<option value="Mobilität, Auto & Kraftfahrzeuge">Mobilität, Auto & Kraftfahrzeuge</option>
+<option value="ÖPNV, Bahn, Bus, Flug & Reisen">ÖPNV, Bahn, Bus, Flug & Reisen</option>
+<option value="Restaurants, Cafés & Gastronomie">Restaurants, Cafés & Gastronomie</option>
+<option value="Lieferdienste & Essen bestellen">Lieferdienste & Essen bestellen</option>
+<option value="Streaming, Musik, TV & Unterhaltung">Streaming, Musik, TV & Unterhaltung</option>
+<option value="Gaming, Computer & Konsolen">Gaming, Computer & Konsolen</option>
+<option value="Elektronik, Internet, Handy & Software">Elektronik, Internet, Handy & Software</option>
+<option value="Shopping, Online-Kauf & Marktplätze">Shopping, Online-Kauf & Marktplätze</option>
+<option value="Kleidung, Schuhe & Mode">Kleidung, Schuhe & Mode</option>
+<option value="Drogerie, Kosmetik & Körperpflege">Drogerie, Kosmetik & Körperpflege</option>
+<option value="Gesundheit, Apotheke & Arzt">Gesundheit, Apotheke & Arzt</option>
+<option value="Barrierefreiheit & Hilfsmittel (Blind / Sehbehindert)">Barrierefreiheit & Hilfsmittel (Blind / Sehbehindert)</option>
+<option value="Versicherungen & Vorsorge">Versicherungen & Vorsorge</option>
+<option value="Bank, Finanzen, Kredite & Gebühren">Bank, Finanzen, Kredite & Gebühren</option>
+<option value="Haustiere & Tierhaltung">Haustiere & Tierhaltung</option>
+<option value="Familie, Kinder & Babybedarf">Familie, Kinder & Babybedarf</option>
+<option value="Schule, Ausbildung & Studium">Schule, Ausbildung & Studium</option>
+<option value="Sport, Fitness, Verein & Hobbys">Sport, Fitness, Verein & Hobbys</option>
+<option value="Spenden, Gemeinnütziges & Zuwendungen">Spenden, Gemeinnütziges & Zuwendungen</option>
+<option value="Sonstige Ausgaben & Bargeld">Sonstige Ausgaben & Bargeld</option>
+</select>
+</div>
+
+<div class="form-group">
+<label for="exp-subcategory" class="field-label">
+<strong>2. Unterkategorie / Geschäft:</strong>
+</label>
+<select id="exp-subcategory" class="large-select">
+<option value="Gesamt / Allgemein">Gesamt / Allgemein</option>
+<option value="Aldi Nord">Aldi Nord</option>
+<option value="Aldi Süd">Aldi Süd</option>
+<option value="Lidl">Lidl</option>
+<option value="Rewe">Rewe</option>
+<option value="Edeka">Edeka</option>
+<option value="Kaufland">Kaufland</option>
+<option value="Penny">Penny</option>
+<option value="Netto Marken-Discount">Netto Marken-Discount</option>
+<option value="Bäckerei / Dorfbäcker">Bäckerei / Dorfbäcker</option>
+<option value="Getränkemarkt / Trinkgut">Getränkemarkt / Trinkgut</option>
+</select>
+</div>
+</div>
+
+<div class="form-group" id="exp-date-group">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+    <label for="exp-date" class="field-label" style="margin: 0;">
+      <strong>📅 Datum der Ausgabe (Kaufdatum):</strong>
+    </label>
+    <div style="display: flex; gap: 6px;">
+      <button type="button" class="btn btn-secondary" onclick="setQuickDate('exp', 0)" style="padding: 2px 8px; font-size: 12px;" aria-label="Ausgabedatum auf Heute setzen">Heute</button>
+      <button type="button" class="btn btn-secondary" onclick="setQuickDate('exp', -1)" style="padding: 2px 8px; font-size: 12px;" aria-label="Ausgabedatum auf Gestern setzen">Gestern</button>
+    </div>
+  </div>
+  <input type="date" id="exp-date" class="large-input" aria-label="Datum der Ausgabe" onchange="autoUpdateFrequencyByDate('exp')">
+</div>
+
+<div id="exp-recurring-details" style="display: none;">
+<div class="form-row-2">
+<div class="form-group" id="exp-month-day-group">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+    <label for="exp-rec-day" class="field-label" style="margin: 0;">
+      <strong>📅 Fälligkeitstag im Monat (1 bis 31):</strong>
+    </label>
+    <div style="display: flex; gap: 4px;">
+      <button type="button" class="btn btn-secondary" onclick="setQuickRecDay('exp', 1)" style="padding: 2px 6px; font-size: 11px;">1.</button>
+      <button type="button" class="btn btn-secondary" onclick="setQuickRecDay('exp', 15)" style="padding: 2px 6px; font-size: 11px;">15.</button>
+      <button type="button" class="btn btn-secondary" onclick="setQuickRecDay('exp', 28)" style="padding: 2px 6px; font-size: 11px;">Monatsende</button>
+    </div>
+  </div>
+  <input type="number" min="1" max="31" id="exp-rec-day" class="large-input" value="1" aria-label="Fälligkeitstag im Monat als Zahl von 1 bis 31">
+</div>
+<div class="form-group" id="exp-weekday-group" style="display: none;">
+<label for="exp-rec-weekday" class="field-label">
+<strong>An welchem Wochentag jede Woche?</strong>
+</label>
+<select id="exp-rec-weekday" class="large-select">
+<option value="1">Jeden Montag</option>
+<option value="2">Jeden Dienstag</option>
+<option value="3">Jeden Mittwoch</option>
+<option value="4">Jeden Donnerstag</option>
+<option value="5" selected>Jeden Freitag</option>
+<option value="6">Jeden Samstag</option>
+<option value="0">Jeden Sonntag</option>
+</select>
+</div>
+<div class="form-group" id="exp-yearly-month-group" style="display: none;">
+<label for="exp-yearly-month" class="field-label">
+<strong>In welchem Monat fällig?</strong>
+</label>
+<select id="exp-yearly-month" class="large-select">
+<option value="0">Januar</option>
+<option value="1">Februar</option>
+<option value="2">März</option>
+<option value="3">April</option>
+<option value="4">Mai</option>
+<option value="5">Juni</option>
+<option value="6">Juli</option>
+<option value="7">August</option>
+<option value="8">September</option>
+<option value="9">Oktober</option>
+<option value="10">November</option>
+<option value="11">Dezember</option>
+</select>
+</div>
+</div>
+</div>
+
+<div class="form-group">
+<label for="exp-desc" class="field-label">
+<strong>Beschreibung / Wofür genau?</strong>
+</label>
+<input type="text" id="exp-desc" class="large-input" placeholder="z. B. Geplante neue Kopfhörer, Döner, Spotify...">
+</div>
+
+<div class="form-actions">
+<button type="submit" class="btn btn-primary">
+<span>🔴<strong>Ausgabe / Geplanten Kauf speichern</strong>(Enter)</span>
+</button>
+<button type="button" class="btn btn-secondary" onclick="switchView('overview')">
+<span>Zurück zur Übersicht</span>
+</button>
+</div>
+</form>
+</div>
+</div>
+
+<!-- =======================================================================
+ ANSICHT 3: EINNAHME EINTRAGEN
+ ======================================================================= -->
+<div id="view-income" class="view-panel" role="tabpanel" aria-labelledby="tab-income" style="display: none;">
+<div class="form-container">
+<h2 class="view-heading" tabindex="-1" id="heading-income-view" data-emoji="🟢">🟢 Einnahme eintragen oder für die Zukunft planen</h2>
+<p class="view-sub">Trage hier Geld ein, das du bekommen hast (oder das du in einem Zukunfts-Monat erwartest).</p>
+
+<form id="form-add-income" class="accessible-form" onsubmit="handleAddIncome(event)">
+<div class="form-group">
+<label for="inc-amount" class="field-label">
+<strong>Betrag in Euro (€)</strong><span class="required-star" aria-hidden="true">*</span>
+</label>
+<input type="number" step="0.01" min="0.01" id="inc-amount" class="large-input" placeholder="z. B. 50 oder 150" required autofocus autocomplete="off">
+</div>
+
+<div class="form-group">
+<label for="inc-frequency" class="field-label">
+<strong>Art & Häufigkeit der Einnahme</strong>
+</label>
+<select id="inc-frequency" class="large-select" onchange="toggleIncomeFrequencyFields()">
+<option value="once" selected>Einmalig (bereits erhalten)</option>
+<option value="planned">🎯 Geplante einmalige Zukunftseinnahme</option>
+<option value="weekly">📅 Wöchentlich (Jede Woche)</option>
+<option value="monthly">📅 Monatlich (Jeden Monat)</option>
+<option value="quarterly">🔄 Alle 3 Monate (Quartalsweise)</option>
+<option value="halfyear">📈 Alle 6 Monate (Halbjährlich)</option>
+<option value="yearly">🗓Jährlich (1x im Jahr)</option>
+</select>
+</div>
+
+<div class="form-group">
+<label for="inc-account" class="field-label">
+<strong>Auf welches Konto?</strong><span class="required-star" aria-hidden="true">*</span>
+</label>
+<select id="inc-account" class="large-select" required>
+<option value="bank">🏦 Bankkonto / Girokonto</option>
+<option value="paypal">🅿PayPal Guthaben</option>
+<option value="cash">💵 Bargeld (ins Portemonnaie bekommen)</option>
+<option value="savings">📈 Direkt aufs Tagesgeldkonto (Sparen)</option>
+</select>
+</div>
+
+<div class="form-group">
+<label for="inc-cat-search" class="field-label">
+<span>🔍<strong>Einnahme-Art schnell suchen (z. B. Gehalt, Blindengeld, Rente, Vinted):</strong></span>
+</label>
+<input type="text" id="inc-cat-search" class="large-input" placeholder="Tippe z. B. 'Gehalt', 'Blindengeld', 'Pflege', 'Rente', 'Vinted'..." oninput="handleCategorySearch('inc')" autocomplete="off">
+</div>
+
+<div class="form-row-2">
+<div class="form-group">
+<label for="inc-category" class="field-label">
+<strong>1. Hauptkategorie:</strong><span class="required-star" aria-hidden="true">*</span>
+</label>
+<select id="inc-category" class="large-select" onchange="onMainCategoryChange('inc')" required>
+<option value="Gehalt, Lohn & Beruf">Gehalt, Lohn & Beruf</option>
+<option value="Staatliche Leistungen, Hilfen & Zuschüsse">Staatliche Leistungen, Hilfen & Zuschüsse</option>
+<option value="Taschengeld & Private Unterstützung">Taschengeld & Private Unterstützung</option>
+<option value="Spenden, Zuwendungen & Förderungen">Spenden, Zuwendungen & Förderungen</option>
+<option value="Geschenke, Boni & Gewinne">Geschenke, Boni & Gewinne</option>
+<option value="Rente, Pension & Versorgung">Rente, Pension & Versorgung</option>
+<option value="Verkäufe, Gebrauchtwaren & Erstattungen">Verkäufe, Gebrauchtwaren & Erstattungen</option>
+<option value="Zinsen, Dividenden, Miete & Kapital">Zinsen, Dividenden, Miete & Kapital</option>
+<option value="Sonstige Einnahmen">Sonstige Einnahmen</option>
+<option value="Nebenjob, Minijob & Freiberufliche Projekte">Nebenjob, Minijob & Freiberufliche Projekte</option>
+<option value="Kreatives, Musik, Kunst & Content Creation">Kreatives, Musik, Kunst & Content Creation</option>
+<option value="Krypto, Staking & Web3-Erträge">Krypto, Staking & Web3-Erträge</option>
+<option value="Cashback, Prämien & Treueprogramme">Cashback, Prämien & Treueprogramme</option>
+<option value="Erstattungen, Steuern & Kautionen">Erstattungen, Steuern & Kautionen</option>
+<option value="Private Rückzahlungen & Kostenbeteiligungen">Private Rückzahlungen & Kostenbeteiligungen</option>
+<option value="Vermietung, Verpachtung & Carsharing">Vermietung, Verpachtung & Carsharing</option>
+</select>
+</div>
+
+<div class="form-group">
+<label for="inc-subcategory" class="field-label">
+<strong>2. Unterkategorie / Detail:</strong>
+</label>
+<select id="inc-subcategory" class="large-select">
+<option value="Hauptjob Monatsgehalt / Nettolohn">Hauptjob Monatsgehalt / Nettolohn</option>
+<option value="Ausbildungsvergütung / Lehrlingsgehalt">Ausbildungsvergütung / Lehrlingsgehalt</option>
+<option value="Beamtenbesoldung / Grundgehalt">Beamtenbesoldung / Grundgehalt</option>
+<option value="Minijob / Nebenjob (538 € steuerfrei)">Minijob / Nebenjob (538 € steuerfrei)</option>
+<option value="Zweitjob / Teilzeitgehalt">Zweitjob / Teilzeitgehalt</option>
+<option value="Überstundenvergütung &amp; Zulagen (Nacht, Feiertag)">Überstundenvergütung &amp; Zulagen (Nacht, Feiertag)</option>
+<option value="Urlaubsgeld">Urlaubsgeld</option>
+<option value="Weihnachtsgeld / 13. Gehalt">Weihnachtsgeld / 13. Gehalt</option>
+<option value="Jahresbonus / Leistungsprämie / Provision">Jahresbonus / Leistungsprämie / Provision</option>
+<option value="Trinkgeld (im Beruf erhalten)">Trinkgeld (im Beruf erhalten)</option>
+<option value="Honorar aus Selbstständigkeit / Freiberuflichkeit">Honorar aus Selbstständigkeit / Freiberuflichkeit</option>
+<option value="Werkstudenten-Gehalt">Werkstudenten-Gehalt</option>
+<option value="Praktikumsvergütung">Praktikumsvergütung</option>
+</select>
+</div>
+</div>
+
+<div class="form-group" id="inc-date-group">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+    <label for="inc-date" class="field-label" style="margin: 0;">
+      <strong>📅 Datum der Einnahme (Geldeingang):</strong>
+    </label>
+    <div style="display: flex; gap: 6px;">
+      <button type="button" class="btn btn-secondary" onclick="setQuickDate('inc', 0)" style="padding: 2px 8px; font-size: 12px;" aria-label="Einnahmedatum auf Heute setzen">Heute</button>
+      <button type="button" class="btn btn-secondary" onclick="setQuickDate('inc', -1)" style="padding: 2px 8px; font-size: 12px;" aria-label="Einnahmedatum auf Gestern setzen">Gestern</button>
+    </div>
+  </div>
+  <input type="date" id="inc-date" class="large-input" aria-label="Datum der Einnahme" onchange="autoUpdateFrequencyByDate('inc')">
+</div>
+
+<div id="inc-recurring-details" style="display: none;">
+<div class="form-group" id="inc-month-day-group">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+    <label for="inc-rec-day" class="field-label" style="margin: 0;">
+      <strong>📅 Tag des Geldeingangs im Monat (1 bis 31):</strong>
+    </label>
+    <div style="display: flex; gap: 4px;">
+      <button type="button" class="btn btn-secondary" onclick="setQuickRecDay('inc', 1)" style="padding: 2px 6px; font-size: 11px;">1.</button>
+      <button type="button" class="btn btn-secondary" onclick="setQuickRecDay('inc', 15)" style="padding: 2px 6px; font-size: 11px;">15.</button>
+      <button type="button" class="btn btn-secondary" onclick="setQuickRecDay('inc', 28)" style="padding: 2px 6px; font-size: 11px;">Monatsende</button>
+    </div>
+  </div>
+  <input type="number" min="1" max="31" id="inc-rec-day" class="large-input" value="1" aria-label="Tag des Geldeingangs im Monat als Zahl von 1 bis 31">
+</div>
+<div class="form-group" id="inc-weekday-group" style="display: none;">
+<label for="inc-rec-weekday" class="field-label">
+<strong>An welchem Wochentag jede Woche?</strong>
+</label>
+<select id="inc-rec-weekday" class="large-select">
+<option value="1">Jeden Montag</option>
+<option value="2">Jeden Dienstag</option>
+<option value="3">Jeden Mittwoch</option>
+<option value="4">Jeden Donnerstag</option>
+<option value="5" selected>Jeden Freitag</option>
+<option value="6">Jeden Samstag</option>
+<option value="0">Jeden Sonntag</option>
+</select>
+</div>
+</div>
+
+<div class="form-group">
+<label for="inc-desc" class="field-label">
+<strong>Beschreibung / Von wem?</strong>
+</label>
+<input type="text" id="inc-desc" class="large-input" placeholder="z. B. Taschengeld, Vinted Jacke Verkauf im Oktober...">
+</div>
+
+<div class="form-actions">
+<button type="submit" class="btn btn-primary">
+<span>🟢<strong>Einnahme speichern</strong>(Enter)</span>
+</button>
+<button type="button" class="btn btn-secondary" onclick="switchView('overview')">
+<span>Zurück zur Übersicht</span>
+</button>
+</div>
+</form>
+</div>
+</div>
+
+<!-- =======================================================================
+ ANSICHT 4: UMBUCHEN & SPAREN
+ ======================================================================= -->
+<div id="view-transfer" class="view-panel" role="tabpanel" aria-labelledby="tab-transfer" style="display: none;">
+<div class="form-container">
+<h2 class="view-heading" tabindex="-1" id="heading-transfer-view" data-emoji="🔄">🔄 Geld umbuchen & auf anderes Konto sparen</h2>
+<p class="view-sub">Verschiebe Geld zwischen deinen Konten – entweder sofort oder als geplanter monatlicher Sparplan.</p>
+
+<form id="form-add-transfer" class="accessible-form" onsubmit="handleAddTransfer(event)">
+<div class="form-group">
+<label for="trf-amount" class="field-label">
+<strong>Betrag zum Umbuchen in Euro (€)</strong><span class="required-star" aria-hidden="true">*</span>
+</label>
+<input type="number" step="0.01" min="0.01" id="trf-amount" class="large-input" placeholder="z. B. 25 oder 50" required autofocus autocomplete="off">
+</div>
+
+<div class="form-group">
+<label for="trf-frequency" class="field-label">
+<strong>Häufigkeit der Umbuchung</strong>
+</label>
+<select id="trf-frequency" class="large-select" onchange="toggleTransferFrequencyFields()">
+<option value="once" selected>Einmalig (Jetzt sofort oder an bestimmtem Tag verschieben)</option>
+<option value="weekly">📅 Wöchentlich (Automatischer wöchentlicher Sparplan)</option>
+<option value="monthly">📅 Monatlich (Automatischer monatlicher Sparplan)</option>
+<option value="quarterly">🔄 Alle 3 Monate (Quartalsweiser Sparplan)</option>
+<option value="halfyear">📈 Alle 6 Monate (Halbjährlicher Sparplan)</option>
+<option value="yearly">🗓Jährlich (Jährlicher Sparplan)</option>
+</select>
+</div>
+
+<div class="form-row-2">
+<div class="form-group">
+<label for="trf-from" class="field-label"><strong>Von welchem Konto abbuchen (Quelle)?</strong></label>
+<select id="trf-from" class="large-select" required onchange="handleTransferAccountsChange()">
+<option value="bank" selected>🏦 Bankkonto / Girokonto</option>
+<option value="paypal">🅿PayPal Guthaben</option>
+<option value="cash">💵 Bargeld</option>
+<option value="savings">📈 Tagesgeldkonto</option>
+</select>
+</div>
+
+<div class="form-group">
+<label for="trf-to" class="field-label"><strong>Auf welches Konto einzahlen (Ziel / Sparen)?</strong></label>
+<select id="trf-to" class="large-select" required onchange="handleTransferAccountsChange()">
+<option value="savings" selected>📈 Tagesgeldkonto (Sparen / Notgroschen)</option>
+<option value="paypal">🅿PayPal Guthaben</option>
+<option value="bank">🏦 Bankkonto / Girokonto</option>
+<option value="cash">💵 Bargeld (Geldautomat abgehoben)</option>
+</select>
+</div>
+</div>
+
+<!-- OPTIONALE SPARTÖPFE FÜR QUELLE & ZIEL -->
+<div class="form-row-2" style="margin-top: 4px;">
+<div class="form-group" id="group-trf-from-pot" style="display: none;">
+  <label for="trf-from-pot" class="field-label"><strong>Aus Spartopf entnehmen (optional):</strong></label>
+  <select id="trf-from-pot" class="large-select">
+    <option value="">(Kein Spartopf - Allgemeines Kontoguthaben)</option>
+  </select>
+</div>
+<div class="form-group" id="group-trf-to-pot" style="display: none;">
+  <label for="trf-to-pot" class="field-label"><strong>🎯 In Spartopf einzahlen (optional):</strong></label>
+  <select id="trf-to-pot" class="large-select">
+    <option value="">(Kein Spartopf - Allgemeines Kontoguthaben)</option>
+  </select>
+</div>
+</div>
+
+<div class="form-group" id="trf-date-group">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+    <label for="trf-date" class="field-label" style="margin: 0;">
+      <strong>📅 Datum der Umbuchung:</strong>
+    </label>
+    <div style="display: flex; gap: 6px;">
+      <button type="button" class="btn btn-secondary" onclick="setQuickDate('trf', 0)" style="padding: 2px 8px; font-size: 12px;" aria-label="Umbuchungsdatum auf Heute setzen">Heute</button>
+      <button type="button" class="btn btn-secondary" onclick="setQuickDate('trf', -1)" style="padding: 2px 8px; font-size: 12px;" aria-label="Umbuchungsdatum auf Gestern setzen">Gestern</button>
+    </div>
+  </div>
+  <input type="date" id="trf-date" class="large-input" aria-label="Datum der Umbuchung" onchange="autoUpdateFrequencyByDate('trf')">
+</div>
+
+<div id="trf-recurring-details" style="display: none;">
+<div class="form-group" id="trf-month-day-group">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+    <label for="trf-rec-day" class="field-label" style="margin: 0;">
+      <strong>📅 Sparplan-Ausführungstag im Monat (1 bis 31):</strong>
+    </label>
+    <div style="display: flex; gap: 4px;">
+      <button type="button" class="btn btn-secondary" onclick="setQuickRecDay('trf', 1)" style="padding: 2px 6px; font-size: 11px;">1.</button>
+      <button type="button" class="btn btn-secondary" onclick="setQuickRecDay('trf', 15)" style="padding: 2px 6px; font-size: 11px;">15.</button>
+      <button type="button" class="btn btn-secondary" onclick="setQuickRecDay('trf', 28)" style="padding: 2px 6px; font-size: 11px;">Monatsende</button>
+    </div>
+  </div>
+  <input type="number" min="1" max="31" id="trf-rec-day" class="large-input" value="1" aria-label="Ausführungstag im Monat als Zahl von 1 bis 31">
+</div>
+<div class="form-group" id="trf-weekday-group" style="display: none;">
+<label for="trf-rec-weekday" class="field-label">
+<strong>An welchem Wochentag jede Woche sparen?</strong>
+</label>
+<select id="trf-rec-weekday" class="large-select">
+<option value="1">Jeden Montag</option>
+<option value="2">Jeden Dienstag</option>
+<option value="3">Jeden Mittwoch</option>
+<option value="4">Jeden Donnerstag</option>
+<option value="5" selected>Jeden Freitag</option>
+<option value="6">Jeden Samstag</option>
+<option value="0">Jeden Sonntag</option>
+</select>
+</div>
+</div>
+
+<div class="form-group">
+<label for="trf-desc" class="field-label"><strong>Zweck / Notiz</strong></label>
+<input type="text" id="trf-desc" class="large-input" placeholder="z. B. Sparplan Notgroschen, Führerschein Sparen...">
+</div>
+
+<div class="form-actions">
+<button type="submit" class="btn btn-primary">
+<span>🔄<strong>Umbuchung / Sparplan speichern</strong>(Enter)</span>
+</button>
+<button type="button" class="btn btn-secondary" onclick="switchView('overview')">
+<span>Zurück zur Übersicht</span>
+</button>
+</div>
+</form>
+</div>
+</div>
+
+<!-- =======================================================================
+ ANSICHT 5: EINSTELLUNGEN, DESIGN & BACKUP
+ ======================================================================= -->
+<div id="view-settings" class="view-panel" role="tabpanel" aria-labelledby="tab-settings" style="display: none;">
+<div class="form-container">
+<h2 class="view-heading" tabindex="-1" id="heading-settings-view" data-emoji="">Einstellungen, Design & Datensicherung</h2>
+
+<!-- 1. DARSTELLUNG, DESIGN & SCHRIFTGRÖSSE -->
+<section class="settings-box" aria-labelledby="theme-settings-heading" style="border-left: 8px solid var(--accent-action);">
+<h3 id="theme-settings-heading" data-emoji="🎨">Darstellung, Design & Schriftgröße</h3>
+<p class="field-hint">Passe hier das Design und die Schriftgröße für deine Augen an:</p>
+
+<div class="form-row-2" style="margin-top: 10px;">
+<div class="form-group">
+<label for="settings-theme-select" class="field-label"><strong>Farbkontrast / Design:</strong></label>
+<select id="settings-theme-select" class="large-select" onchange="changeTheme(this.value)">
+<option value="theme-light" selected>Standard Web-Design (Hell & Modern)</option>
+<option value="theme-dark">Dunkel-Modus (Weiß auf Dunkelgrau/Schwarz)</option>
+<option value="theme-high-contrast">Gelb auf Schwarz (Maximaler Kontrast)</option>
+</select>
+</div>
+
+<div class="form-group">
+<label for="settings-fontsize-select" class="field-label"><strong>Schriftgröße / Textgröße:</strong></label>
+<select id="settings-fontsize-select" class="large-select" onchange="changeFontSize(this.value)">
+<option value="font-normal" selected>Normal (Standard 100%)</option>
+<option value="font-large">Groß (125% - Größere Schrift)</option>
+<option value="font-xlarge">Sehr groß (150% - Riesige Schrift)</option>
+</select>
+</div>
+</div>
+</section>
+
+<div class="form-group" style="margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border-subtle);">
+<label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 17px; font-weight: bold;">
+<input type="checkbox" id="settings-show-symbols" onchange="toggleSymbolsDisplay(this.checked)" onclick="toggleSymbolsDisplay(this.checked)" checked style="width: 22px; height: 22px;">
+<span>Symbole & Emojis in der App anzeigen</span>
+</label>
+<p class="field-hint" style="margin-top: 4px;">Wenn ausgeschaltet, wird die gesamte App ohne Symbole in reinem, klarem Text angezeigt.</p>
+</div>
+
+<!-- 2. GITHUB AUTO-UPDATER -->
+<section class="settings-box" aria-labelledby="github-updater-heading" style="border-left: 8px solid var(--accent-income);">
+<h3 id="github-updater-heading" data-emoji="🔄">GitHub Auto-Updater (App-Status)</h3>
+<p class="field-hint">Deine App aktualisiert sich beim Starten automatisch. Deine verschlüsselten Finanzdaten bleiben dabei zu 100% sicher und unverändert erhalten:</p>
+ 
+<div id="update-status-msg" style="font-weight: bold; color: var(--text-primary); margin: 6px 0;">
+ Installierte Version: <strong>v6.2.0</strong> (Open Source auf GitHub)
+</div>
+
+<div class="form-actions" style="margin-top: 10px;">
+<a href="https://github.com/Lauju1909/BarrierefreieFinanzApp/releases/latest" target="_blank" class="btn btn-secondary" style="flex: 1; text-decoration: none;">
+<span><strong>GitHub Repository & Releases öffnen</strong></span>
+</a>
+</div>
+</section>
+
+<!-- 3. DATENSICHERUNG & PC-UMZUG (BACKUP & IMPORT) -->
+<section class="settings-box" aria-labelledby="backup-restore-heading" style="border-left: 8px solid var(--accent-future);">
+<h3 id="backup-restore-heading" data-emoji="💾">Datensicherung & PC-Wechsel (Backup & Wiederherstellen)</h3>
+<p class="field-hint">Hier kannst du alle deine Daten als verschlüsselte Sicherungsdatei herunterladen oder auf einen neuen PC übertragen:</p>
+
+<div class="form-actions" style="margin-top: 10px;">
+<button type="button" class="btn btn-secondary" onclick="exportEncryptedBackup()" style="flex: 1;">
+<span><strong>Verschlüsseltes Backup herunterladen</strong> (.json)</span>
+</button>
+<label class="btn btn-secondary" style="flex: 1; cursor: pointer; text-align: center;">
+<span><strong>Backup-Datei importieren</strong></span>
+<input type="file" id="import-backup-file" accept=".json" onchange="importEncryptedBackup(event)" style="display: none;">
+</label>
+</div>
+</section>
+
+
+
+ 
+
+
+<!-- MONATS-BUDGETS & AUSGABEN-LIMITS -->
+<section class="settings-box" aria-labelledby="heading-budgets-view" style="border-left: 8px solid #FF9800; margin-top: 18px;">
+<h3 id="heading-budgets-view" data-emoji="🎯">Monats-Budgets &amp; Ausgaben-Limits</h3>
+<p class="field-hint">Setze monatliche Budgetgrenzen für deine Ausgabenkategorien. Die App warnt dich rechtzeitig, wenn ein Budget zu 80% oder 100% aufgebraucht ist:</p>
+
+<form id="form-set-budget" onsubmit="handleSaveBudget(event)" class="accessible-form" style="margin-top: 14px; background: var(--card-bg, #fff); border: 2px solid var(--border-color); border-radius: 8px; padding: 16px;">
+  <div class="form-row-2">
+    <div class="form-group">
+      <label for="budget-category-select" class="field-label"><strong>Ausgaben-Kategorie:</strong><span class="required-star" aria-hidden="true">*</span></label>
+      <select id="budget-category-select" class="large-select" required>
+        <!-- Kategorien -->
+      </select>
+    </div>
+    <div class="form-group">
+      <label for="budget-amount-input" class="field-label"><strong>Monats-Limit in Euro (€):</strong><span class="required-star" aria-hidden="true">*</span></label>
+      <input type="number" step="1" min="1" id="budget-amount-input" class="large-input" placeholder="z. B. 350" required>
+    </div>
+  </div>
+  <div class="form-actions" style="margin-top: 12px;">
+    <button type="submit" class="btn btn-primary" style="background-color: #FF9800; border-color: #F57C00; width: 100%;">
+      <span><strong>Budget festlegen / aktualisieren</strong></span>
+    </button>
+  </div>
+</form>
+
+<div id="budgets-overview-container" style="margin-top: 20px;">
+  <!-- Dynamisch befüllt mit Budget-Balken -->
+</div>
+</section>
+
+
+<!-- BANK-KONTOAUSZUG & CSV-IMPORT -->
+<section class="settings-box" aria-labelledby="csv-import-heading" style="border-left: 8px solid #4CAF50; margin-top: 18px;">
+<h3 id="csv-import-heading" data-emoji="📥">Bank-Kontoauszug / CSV-Datei importieren</h3>
+<p class="field-hint">Lade hier deinen monatlichen Kontoauszug als .csv-Datei (z. B. von Sparkasse, ING, DKB, Volksbank, PayPal) hoch. Die App erkennt die Buchungen automatisch und zeigt dir vor dem Speichern eine praktische Vorschau:</p>
+
+<div class="form-actions" style="margin-top: 12px;">
+  <label class="btn btn-primary" style="background-color: #4CAF50; border-color: #388E3C; flex: 1; cursor: pointer; text-align: center;">
+    <span><strong>Kontoauszug (.csv) auswählen &amp; einlesen</strong></span>
+    <input type="file" id="bank-csv-file-input" accept=".csv,.txt" onchange="handleBankCsvUpload(event)" style="display: none;">
+  </label>
+</div>
+</section>
+
+<!-- DRUCKBARER MONATSBERICHT & PDF-EXPORT -->
+<section class="settings-box" aria-labelledby="print-report-settings-heading" style="border-left: 8px solid #2196F3; margin-top: 18px;">
+<h3 id="print-report-settings-heading" data-emoji="📄">Druckbarer Monatsbericht &amp; Steuer-Nachweis (PDF)</h3>
+<p class="field-hint">Erstelle mit einem Klick einen druckfertigen, sauberen Finanzbericht für deine Unterlagen, den Steuerberater oder Behörden:</p>
+
+<div class="form-actions" style="margin-top: 12px; display: flex; gap: 10px; flex-wrap: wrap;">
+  <button type="button" class="btn btn-primary" onclick="openPrintReportModal()" style="background-color: #2196F3; border-color: #1976D2; flex: 1;">
+    <span><strong>Monatsbericht für aktuellen Monat erstellen</strong></span>
+  </button>
+  <button type="button" class="btn btn-secondary" onclick="openPrintReportModal(null, null, 'tax_official')" style="flex: 1;">
+    <span><strong>Behörden- &amp; Steuer-Nachweis erstellen</strong></span>
+  </button>
+</div>
+</section>
+
+
+<!-- 3b. EIGENE KATEGORIE ODER GESCHÄFT HINZUFÜGEN & VORSCHLAGEN -->
+<section class="settings-box" aria-labelledby="custom-cat-heading" style="border-left: 8px solid #FF9800; margin-top: 18px;">
+<h3 id="custom-cat-heading" data-emoji="">Eigene Kategorie oder Geschäft hinzufügen</h3>
+<p class="field-hint">Fehlt dir ein Geschäft, Laden oder eine Kategorie? Füge sie hier hinzu – sie wird<strong>sofort in deiner App freigeschaltet</strong>und gleichzeitig<strong>automatisch an den Entwickler übermittelt</strong>, damit sie im nächsten Update fest eingebaut werden kann:</p>
+
+<form id="form-add-custom-category" onsubmit="handleAddCustomCategory(event)" style="margin-top: 12px;">
+<div class="form-row-2">
+<div class="form-group">
+<label for="custom-cat-type" class="field-label"><strong>1. Bereich / Art:</strong><span class="required-star" aria-hidden="true">*</span></label>
+<select id="custom-cat-type" class="large-select" onchange="onCustomCatTypeChange()" required>
+<option value="exp" selected>Ausgabe (z. B. Neuer Supermarkt, Laden, Abo)</option>
+<option value="inc">Einnahme (z. B. Neue Einnahmequelle, Nebenjob)</option>
+<option value="trf">Umbuchen / Sparen (z. B. Neues Sparziel)</option>
+</select>
+</div>
+
+<div class="form-group">
+<label for="custom-cat-main-mode" class="field-label"><strong>2. Hauptkategorie-Auswahl:</strong></label>
+<select id="custom-cat-main-mode" class="large-select" onchange="onCustomCatMainModeChange()">
+<option value="existing" selected>Zu bestehender Hauptkategorie hinzufügen</option>
+<option value="new">Komplett neue Hauptkategorie erstellen</option>
+</select>
+</div>
+</div>
+
+<div class="form-group" id="custom-cat-existing-group">
+<label for="custom-cat-main-select" class="field-label"><strong>Hauptkategorie (Übergeordnet):</strong></label>
+<select id="custom-cat-main-select" class="large-select">
+<!-- Dynamisch befüllt -->
+</select>
+</div>
+
+<div class="form-group" id="custom-cat-new-group" style="display: none;">
+<label for="custom-cat-main-new-input" class="field-label"><strong>Name der neuen Hauptkategorie:</strong><span class="required-star" aria-hidden="true">*</span></label>
+<input type="text" id="custom-cat-main-new-input" class="large-input" placeholder="z. B. Krypto & Web3 oder Gartenbau">
+</div>
+
+<div class="form-group">
+<label for="custom-cat-sub-input" class="field-label"><strong>Unterkategorie / Geschäft / Laden:</strong><span class="required-star" aria-hidden="true">*</span></label>
+<input type="text" id="custom-cat-sub-input" class="large-input" placeholder="z. B. Mein Dorfladen, Tante Emma Laden, Krypto-Staking..." required>
+</div>
+
+<div class="form-actions" style="margin-top: 14px;">
+<button type="submit" class="btn btn-primary" id="btn-save-custom-cat" data-emoji="" style="background-color: #FF9800; border-color: #F57C00; width: 100%;">
+<span><strong>Kategorie speichern &amp; an Entwickler übermitteln</strong></span>
+</button>
+</div>
+</form>
+</section>
+
+<!-- 4. FEEDBACK & NEUE FUNKTIONEN VORSCHLAGEN -->
+<section class="settings-box" aria-labelledby="feedback-settings-heading" style="border-left: 8px solid #9c27b0; margin-top: 18px;">
+<h3 id="feedback-settings-heading" data-emoji="💡">Vorschlag für neue Funktionen oder Feedback senden</h3>
+<p class="field-hint">Hast du einen Wunsch für eine neue Funktion oder möchtest Feedback geben? Schreibe es hier auf – es wird<strong>völlig ohne Anmeldung oder E-Mail-Programm</strong>sofort live an den Entwickler übertragen:</p>
+
+<form onsubmit="submitFeatureFeedback(event)" style="margin-top: 10px;">
+<div class="form-group">
+<label for="feedback-name" class="field-label"><strong>Dein Name / Absender (optional):</strong></label>
+<input type="text" id="feedback-name" class="large-input" placeholder="Name oder Pseudonym (optional)">
+</div>
+
+<div class="form-group">
+<label for="feedback-text" class="field-label"><strong>Deine Idee, dein Wunsch oder Feedback:</strong></label>
+<textarea id="feedback-text" class="large-input" rows="3" placeholder="z. B. Ich wünsche mir eine neue Funktion für..." required></textarea>
+</div>
+
+<div class="form-actions" style="margin-top: 10px;">
+<button type="submit" class="btn btn-primary" id="btn-send-feedback" data-emoji="🚀" style="background-color: #9c27b0; border-color: #7b1fa2; width: 100%;">
+<span><strong>Vorschlag / Feedback absenden</strong></span>
+</button>
+</div>
+</form>
+</section>
+
+<!-- 5. PIN ÄNDERN -->
+<section class="settings-box" aria-labelledby="set-pin-heading">
+<h3 id="set-pin-heading" data-emoji="🔒">Sicherheits-PIN / Passwort ändern</h3>
+<form id="form-change-pin" onsubmit="handleChangePin(event)">
+<div class="form-group">
+<label for="change-old-pin" class="field-label">Aktuelle PIN:</label>
+<input type="password" id="change-old-pin" class="large-input" required>
+</div>
+<div class="form-group">
+<label for="change-new-pin" class="field-label">Neue PIN oder Passwort:</label>
+<input type="password" id="change-new-pin" class="large-input" required>
+</div>
+<button type="submit" class="btn btn-secondary"><strong>Neue PIN speichern & Daten neu verschlüsseln</strong></button>
+</form>
+</section>
+
+<!-- 5b. BIOMETRIE / FINGERABDRUCK -->
+<section id="settings-biometric-section" class="settings-box" aria-labelledby="set-bio-heading" style="border-left: 8px solid #4CAF50; margin-top: 18px;">
+  <h3 id="set-bio-heading" data-emoji="👆">👆 Fingerabdruck &amp; Biometrie (Android)</h3>
+  <p class="field-hint">Entsperre deine Finanz-App bequem per Fingerabdrucksensor deines Geräts, ohne jedes Mal deine PIN eintippen zu müssen:</p>
+
+  <div style="margin-top: 12px; display: flex; flex-direction: column; gap: 12px;">
+    <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 17px; font-weight: bold;">
+      <input type="checkbox" id="setting-biometric-toggle" onchange="handleBiometricToggle(this.checked)" style="width: 22px; height: 22px;">
+      <span>Mit Fingerabdruck / Biometrie entsperren</span>
+    </label>
+    <div id="bio-status-hint" class="field-hint" style="font-weight: bold; color: #2E7D32;"></div>
+
+    <div id="bio-test-container" style="margin-top: 4px;">
+      <button type="button" class="btn btn-secondary" id="btn-test-biometric" onclick="BiometricAuth.testBiometricAuth()" style="font-size: 15px; padding: 10px 16px; border: 2px solid #2E7D32; color: #1B5E20; background: rgba(76, 175, 80, 0.08); font-weight: bold; width: 100%;">
+        <span>👆 <strong>Fingerabdruck jetzt testen</strong></span>
+      </button>
+      <div id="bio-test-result" aria-live="polite" style="margin-top: 8px; font-weight: bold; font-size: 14px; text-align: center;"></div>
+    </div>
+  </div>
+</section>
+
+
+<!-- 6. ÄNDERUNGSPROTOKOLL EINSTELLUNG -->
+<section class="settings-box" aria-labelledby="changelog-settings-heading" style="border-left: 8px solid #009688; margin-top: 18px;">
+<h3 id="changelog-settings-heading" data-emoji="📜">Änderungsprotokoll & Update-Hinweise</h3>
+<p class="field-hint">Hier kannst du festlegen, ob bei neuen Updates vor der PIN-Eingabe automatisch das Änderungsprotokoll ("Was ist neu?") angezeigt werden soll:</p>
+
+<div style="margin-top: 12px; display: flex; flex-direction: column; gap: 12px;">
+<label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 17px; font-weight: bold;">
+<input type="checkbox" id="setting-auto-changelog" onchange="handleChangelogSettingChange(event)" style="width: 22px; height: 22px;">
+<span>Änderungsprotokoll bei neuen Versionen vor dem Start anzeigen</span>
+</label>
+
+<div>
+<button type="button" class="btn btn-secondary" onclick="openChangelogModal(true)">
+<span><strong>Änderungsprotokoll jetzt ansehen</strong></span>
+</button>
+</div>
+</div>
+</section>
+
+<!-- 6. DATEN LÖSCHEN / RESET -->
+<section class="settings-box danger-box" aria-labelledby="set-reset-heading">
+<h3 id="set-reset-heading" data-emoji="">DSGVO-Löschung: Alle Daten unwiderruflich vernichten</h3>
+<p class="field-hint">Löscht sämtliche Buchungen, Kontostände, Schlüssel und PINs vollständig von diesem Computer.</p>
+<button class="btn btn-danger" onclick="resetAllAppData()">Alle Daten & Schlüssel restlos löschen</button>
+</section>
+
+</div>
+</div>
+
+<!-- =======================================================================
+ ANSICHT 6: KONTO-OPTIONEN & KONTEN VERWALTEN (DEDIZIERTER REITER)
+ ======================================================================= -->
+<div id="view-accounts" class="view-panel" role="tabpanel" aria-labelledby="tab-accounts" style="display: none;">
+<div class="form-container" style="max-width: 860px;">
+<h2 class="view-heading" tabindex="-1" id="heading-accounts-view" data-emoji="💳">💳 Konto-Optionen &amp; Konten verwalten</h2>
+<p class="view-sub">Hier kannst du beliebig viele Konten verwalten (Girokonten, Kreditkarten, PayPal, Tagesgeld, Sparbücher, Depots, Bargeld, Krypto), Namen ändern, Startguthaben festlegen oder Konten löschen.</p>
+
+<!-- 1. NEUES KONTO ANLEGEN -->
+<section class="settings-box" style="border-left: 8px solid #2196F3; margin-bottom: 24px;">
+<h3 data-emoji="➕">Neues Konto hinzufügen</h3>
+<form id="form-add-new-account" onsubmit="handleAddNewAccountFromTab(event)" class="accessible-form" style="margin-top: 14px;">
+<div class="form-group">
+  <label for="new-acc-name" class="field-label"><strong>Name des neuen Kontos:</strong><span class="required-star" aria-hidden="true">*</span></label>
+  <input type="text" id="new-acc-name" class="large-input" placeholder="z. B. ING Girokonto, Trade Republic Depot, Urlaubskonto..." required autocomplete="off">
+</div>
+
+<div class="form-row-2">
+  <div class="form-group">
+    <label for="new-acc-type" class="field-label"><strong>Art des Kontos:</strong><span class="required-star" aria-hidden="true">*</span></label>
+    <select id="new-acc-type" class="large-select" onchange="onNewAccTypeTabChange()" required>
+      <option value="bank" selected>Bankkonto / Girokonto</option>
+      <option value="credit">Kreditkarte / Debitkarte</option>
+      <option value="paypal">PayPal &amp; Online-Zahlungsdienst</option>
+      <option value="savings">Tagesgeld, Festgeld &amp; Sparkonto</option>
+      <option value="cash">Bargeld &amp; Portemonnaie</option>
+      <option value="depot">Depot, Wertpapiere &amp; ETFs</option>
+      <option value="crypto">Krypto &amp; Web3 Wallet</option>
+      <option value="loan">Bausparvertrag, Kredit &amp; Darlehen</option>
+      <option value="other">Sonstiges Konto / Guthabenkarte</option>
+    </select>
+  </div>
+  <div class="form-group">
+    <label for="new-acc-balance" class="field-label"><strong>Startguthaben in Euro (€):</strong></label>
+    <input type="number" step="0.01" id="new-acc-balance" class="large-input" placeholder="0,00" value="0.00">
+  </div>
+</div>
+
+<div class="form-group">
+  <label for="new-acc-hint" class="field-label"><strong>Hinweis / Verwendung (optional):</strong></label>
+  <input type="text" id="new-acc-hint" class="large-input" placeholder="z. B. Miete &amp; Gehalt, Notgroschen, Taschengeld...">
+</div>
+
+<div class="form-actions" style="margin-top: 16px;">
+  <button type="submit" class="btn btn-primary" style="background-color: #2196F3; border-color: #1976D2; width: 100%;">
+    <span>➕ <strong>Neues Konto speichern</strong> (Enter)</span>
+  </button>
+</div>
+</form>
+</section>
+
+<!-- 2. VORHANDENE KONTEN VERWALTEN -->
+<section class="settings-box" style="border-left: 8px solid #4CAF50;">
+<h3 data-emoji="📋">Deine vorhandenen Konten (Namen ändern &amp; löschen)</h3>
+<p class="field-hint">Hier siehst du alle aktuell aktiven Konten. Klicke auf "Bearbeiten", um den Namen oder das Startguthaben anzupassen, oder auf "Löschen", um ein Konto zu entfernen:</p>
+
+<div id="tab-accounts-list" style="margin-top: 14px; display: flex; flex-direction: column; gap: 12px;">
+<!-- Dynamisch befüllt -->
+</div>
+</section>
+
+<!-- 3. SPARTÖPFE & SPARZIELE DER KONTEN -->
+<section class="settings-box" style="border-left: 8px solid #9C27B0; margin-top: 24px;">
+<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+  <div>
+    <h3 data-emoji="🎯" style="margin-bottom: 4px;">🎯 Spartöpfe &amp; Sparziele deiner Konten</h3>
+    <p class="field-hint" style="margin: 0;">Erstelle konkrete Spartöpfe (z. B. Notgroschen, Urlaub, Neues Auto) und ordne sie deinen Sparkonten oder Girokonten zu:</p>
+  </div>
+</div>
+
+<!-- FORMULAR NEUER SPARTOPF -->
+<form id="form-add-saving-pot" onsubmit="handleAddSavingPot(event)" class="accessible-form" style="margin-top: 14px; background: var(--card-bg, #fff); border: 2px solid var(--border-color); border-radius: 8px; padding: 16px;">
+  <h4 style="margin-top: 0; margin-bottom: 10px; font-size: 16px;">➕ Neuen Spartopf anlegen</h4>
+  
+  <div class="form-row-2">
+    <div class="form-group">
+      <label for="pot-name" class="field-label"><strong>Name des Spartopfs / Sparziel:</strong><span class="required-star" aria-hidden="true">*</span></label>
+      <input type="text" id="pot-name" class="large-input" placeholder="z. B. Urlaub Ostsee, Notgroschen, Neues E-Bike..." required autocomplete="off">
+    </div>
+    <div class="form-group">
+      <label for="pot-parent-account" class="field-label"><strong>Zugeordnetes Hauptkonto:</strong><span class="required-star" aria-hidden="true">*</span></label>
+      <select id="pot-parent-account" class="large-select" required>
+        <!-- Dynamisch befüllt -->
+      </select>
+    </div>
+  </div>
+
+  <div class="form-row-2">
+    <div class="form-group">
+      <label for="pot-current-amount" class="field-label"><strong>Bereits angesparter Startbetrag (€):</strong></label>
+      <input type="number" step="0.01" min="0" id="pot-current-amount" class="large-input" placeholder="0,00" value="0.00">
+    </div>
+    <div class="form-group">
+      <label for="pot-target-amount" class="field-label"><strong>Sparziel / Zielsumme in Euro (€):</strong><span class="required-star" aria-hidden="true">*</span></label>
+      <input type="number" step="0.01" min="0.01" id="pot-target-amount" class="large-input" placeholder="z. B. 1000 oder 2500" required>
+    </div>
+  </div>
+
+  <div class="form-group">
+    <label for="pot-note" class="field-label"><strong>Notiz / Zweck (optional):</strong></label>
+    <input type="text" id="pot-note" class="large-input" placeholder="z. B. Bis Sommer 2027 monatlich 50 € sparen">
+  </div>
+
+  <div class="form-actions" style="margin-top: 10px;">
+    <button type="submit" class="btn btn-primary" style="background-color: #9C27B0; border-color: #7B1FA2; width: 100%;">
+      <span>🎯 <strong>Spartopf erstellen</strong></span>
+    </button>
+  </div>
+</form>
+
+<div style="font-size: 13px; color: var(--text-muted); margin-top: 10px; margin-bottom: 8px; padding: 8px 12px; background: rgba(156, 39, 176, 0.06); border-left: 4px solid #9C27B0; border-radius: 4px;">
+  💡 <strong>Hinweis:</strong> Einzahlungen in Spartöpfe und Entnahmen erfolgen verbindlich und sauber nachvollziehbar über <strong>Reiter 4 (Umbuchen &amp; Sparen)</strong>.
+</div>
+
+<!-- LISTE DER SPARTÖPFE -->
+<div id="tab-saving-pots-list" style="margin-top: 16px;">
+  <!-- Per JS befüllt -->
+</div>
+</section>
+
+</div>
+</div>
+
+<!-- =======================================================================
+ ANSICHT 7: WUNSCHLISTE, SPARZIELE & ANSCHAFFUNGEN
+ ======================================================================= -->
+<div id="view-wishlist" class="view-panel" role="tabpanel" aria-labelledby="tab-wishlist" style="display: none;">
+<div class="form-container" style="max-width: 920px;">
+  <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 14px;">
+    <div>
+      <h2 class="view-heading" tabindex="-1" id="heading-wishlist-view" data-emoji="🎁" style="margin-bottom: 4px;">🎁 Wunschliste, Sparziele &amp; Anschaffungen</h2>
+      <p class="view-sub" style="margin: 0;">Plane Anschaffungen, behalte den Überblick über deine Ersparnisse und erfülle Wünsche direkt als Ausgabe.</p>
+    </div>
+  </div>
+
+  <!-- STATISTIK-KARTEN -->
+  <div class="wishlist-summary-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-bottom: 20px;">
+    <div class="stat-card" style="border-left: 6px solid #9C27B0; background: var(--card-bg, #fff); padding: 14px; border-radius: 8px; border: 1px solid var(--border-color);">
+      <span class="stat-title" style="font-size: 13px; color: var(--text-muted, #666); font-weight: bold;">Offene Wünsche</span>
+      <strong class="stat-val" id="wishlist-stat-count" style="display: block; font-size: 22px; margin-top: 4px;">0 Wünsche</strong>
+    </div>
+    <div class="stat-card" style="border-left: 6px solid #2196F3; background: var(--card-bg, #fff); padding: 14px; border-radius: 8px; border: 1px solid var(--border-color);">
+      <span class="stat-title" style="font-size: 13px; color: var(--text-muted, #666); font-weight: bold;">Gesamtwert aller Wünsche</span>
+      <strong class="stat-val" id="wishlist-stat-total" style="display: block; font-size: 22px; margin-top: 4px; color: #1976D2;">0,00 €</strong>
+    </div>
+    <div class="stat-card" style="border-left: 6px solid #4CAF50; background: var(--card-bg, #fff); padding: 14px; border-radius: 8px; border: 1px solid var(--border-color);">
+      <span class="stat-title" style="font-size: 13px; color: var(--text-muted, #666); font-weight: bold;">Bereits sofort leistbar</span>
+      <strong class="stat-val" id="wishlist-stat-affordable" style="display: block; font-size: 22px; margin-top: 4px; color: #2E7D32;">0 Wünsche</strong>
+    </div>
+  </div>
+
+  <!-- NEUEN WUNSCH EINTRAGEN -->
+  <div class="settings-box" style="border-left: 8px solid #9C27B0; margin-bottom: 24px;">
+    <h3 data-emoji="➕" style="margin-top: 0;">Neuen Wunsch eintragen</h3>
+    <form id="form-add-wish" class="accessible-form" onsubmit="handleAddWish(event)">
+      <div class="form-group" style="margin-bottom: 14px;">
+        <label for="wish-type" class="field-label"><strong>Art des Wunsches / Kostenstruktur:</strong></label>
+        <select id="wish-type" class="large-select" onchange="handleWishTypeChange()">
+          <option value="once" selected>📦 Einmalige Anschaffung / Kauf (z. B. Laptop, Fahrrad, Reise)</option>
+          <option value="monthly">🔄 Monatliches Abonnement / Vertrag (z. B. Streaming, Fitnessstudio, Software)</option>
+          <option value="quarterly">🔄 Vierteljährliches Abonnement (alle 3 Monate)</option>
+          <option value="halfyear">🔄 Halbjährliches Abonnement (alle 6 Monate)</option>
+          <option value="yearly">🗓 Jährliches Abonnement / Jahresbeitrag (z. B. BahnCard, Club, Prime)</option>
+        </select>
+      </div>
+
+      <div class="form-row-2">
+        <div class="form-group">
+          <label for="wish-title" class="field-label"><strong>Wunsch / Dienst / Anschaffung:</strong><span class="required-star" aria-hidden="true">*</span></label>
+          <input type="text" id="wish-title" class="large-input" placeholder="z. B. Netflix, Fitnessstudio, Neuer Laptop..." required autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label for="wish-amount" class="field-label"><strong id="wish-amount-label">Geschätzte Kosten in Euro (€):</strong><span class="required-star" aria-hidden="true">*</span></label>
+          <input type="number" step="0.01" min="0.01" id="wish-amount" class="large-input" placeholder="z. B. 14.99 oder 450" required autocomplete="off" oninput="handleWishAmountInput()">
+          <div id="wish-amount-calc-hint" style="font-size: 13px; color: #9C27B0; font-weight: bold; margin-top: 4px;" aria-live="polite"></div>
+        </div>
+      </div>
+
+      <div class="form-row-2">
+        <div class="form-group">
+          <label for="wish-priority" class="field-label"><strong>Priorität:</strong></label>
+          <select id="wish-priority" class="large-select">
+            <option value="high" selected>⭐⭐⭐ Hohe Priorität (Sehr wichtig)</option>
+            <option value="medium">⭐⭐ Mittlere Priorität (Wichtig)</option>
+            <option value="low">⭐ Geringe Priorität (Schön zu haben)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="wish-category" class="field-label"><strong>Kategorie / Bereich:</strong></label>
+          <select id="wish-category" class="large-select">
+            <option value="Elektronik &amp; Technik" selected>Elektronik &amp; Technik</option>
+            <option value="Urlaub &amp; Reisen">Urlaub &amp; Reisen</option>
+            <option value="Möbel &amp; Wohnen">Möbel &amp; Wohnen</option>
+            <option value="Kleidung &amp; Mode">Kleidung &amp; Mode</option>
+            <option value="Hobby, Sport &amp; Freizeit">Hobby, Sport &amp; Freizeit</option>
+            <option value="Gesundheit &amp; Hilfsmittel">Gesundheit &amp; Hilfsmittel</option>
+            <option value="Bildung &amp; Kurse">Bildung &amp; Kurse</option>
+            <option value="Sonstiges">Sonstiges</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row-2">
+        <div class="form-group">
+          <label for="wish-target-account" class="field-label"><strong>Vorhandenen Spartopf oder Konto auswählen:</strong></label>
+          <select id="wish-target-account" class="large-select" aria-label="Vorhandenen Spartopf oder Konto für Wunsch auswählen">
+            <!-- Dynamisch befüllt -->
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="wish-target-date" class="field-label"><strong>Ziel-Datum (optional):</strong></label>
+          <input type="date" id="wish-target-date" class="large-input">
+        </div>
+      </div>
+
+
+      <div class="form-group">
+        <label for="wish-note" class="field-label"><strong>Notiz oder Link zum Angebot (optional):</strong></label>
+        <input type="text" id="wish-note" class="large-input" placeholder="z. B. Modell XYZ, Rabattaktion im Oktober...">
+      </div>
+
+      <div class="form-actions" style="margin-top: 14px;">
+        <button type="submit" class="btn btn-primary" style="background-color: #9C27B0; border-color: #7B1FA2; width: 100%;">
+          <span>🎁 <strong>Wunsch zur Liste hinzufügen</strong></span>
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <!-- INTERAKTIVE LISTE DER WÜNSCHE -->
+  <div class="section-card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 8px;">
+      <h3 style="margin: 0;">Deine Wünsche &amp; Sparziele</h3>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <label for="wish-filter-status" class="field-label" style="margin: 0; font-size: 13px;">Filter:</label>
+        <select id="wish-filter-status" class="large-select" onchange="renderWishlist()" style="padding: 4px 8px; font-size: 14px;">
+          <option value="open" selected>Nur offene Wünsche</option>
+          <option value="fulfilled">Nur erfüllte Wünsche</option>
+          <option value="all">Alle Wünsche anzeigen</option>
+        </select>
+        <label for="wish-filter-type" class="field-label" style="margin: 0 0 0 8px; font-size: 13px;">Art:</label>
+        <select id="wish-filter-type" class="large-select" onchange="renderWishlist()" style="padding: 4px 8px; font-size: 14px;">
+          <option value="all" selected>Alle Arten</option>
+          <option value="once">Nur Einmalkäufe</option>
+          <option value="subscriptions">Nur Abos &amp; Verträge</option>
+        </select>
+      </div>
+    </div>
+    <div id="wishlist-items-container">
+      <!-- Dynamisch befüllt -->
+    </div>
+  </div>
+</div>
+</div>
+
+
+<!-- =========================================================================
+     8. SMARTPHONE & DESKTOP LIVE-SYNCHRONISATION (E2EE)
+     ========================================================================= -->
+<div id="view-sync" class="view-panel" role="tabpanel" aria-labelledby="tab-sync" style="display: none;">
+  <div class="view-header">
+    <h2>📱 Smartphone &amp; Desktop Live-Synchronisation</h2>
+    <p class="view-desc">Übertrage deine Finanzdaten über eine militärisch gesicherte Ende-zu-Ende-Verschlüsselung (AES-256-GCM) live zwischen deinem Computer und Smartphone, wenn beide Geräte aktiv sind.</p>
+  </div>
+
+  <div style="display: flex; gap: 10px; margin-bottom: 16px;">
+    <button type="button" id="btn-sync-mode-mobile" class="btn btn-secondary" onclick="setSyncMode('mobile')" style="flex: 1; font-weight: bold; padding: 10px; font-size: 15px;">
+      📲 Smartphone (Empfangen)
+    </button>
+    <button type="button" id="btn-sync-mode-desktop" class="btn btn-secondary" onclick="setSyncMode('desktop')" style="flex: 1; font-weight: bold; padding: 10px; font-size: 15px;">
+      💻 Computer (Senden)
+    </button>
+  </div>
+
+  <!-- BEREICH FÜR SMARTPHONE (EMPFÄNGER) -->
+  <div id="sync-mobile-box" class="section-card" style="display: none;">
+    <!-- STATUS WENN BEREITS MIT COMPUTER VERBUNDEN -->
+    <div id="sync-mobile-connected" style="display: none; background: rgba(76, 175, 80, 0.12); border: 2px solid #2E7D32; border-radius: 8px; padding: 18px; text-align: center; margin-bottom: 16px;">
+      <h3 style="font-size: 20px; font-weight: bold; color: #1B5E20; margin: 0 0 8px 0;">
+        🟢 Verbunden mit Computer (<span id="sync-mobile-connected-dev">PC</span>)
+      </h3>
+      <p style="font-size: 15px; color: #2E7D32; margin: 0 0 14px 0;">
+        Zuletzt synchronisiert: <strong id="sync-mobile-connected-time">Heute</strong>
+      </p>
+      <div id="sync-mobile-status-connected" aria-live="polite" style="font-size: 15px; font-weight: bold; color: #1565C0; margin-bottom: 14px; padding: 10px 14px; background: rgba(255,255,255,0.9); border-radius: 6px; border: 1px solid #BBDEFB;">
+        🟢 Bereit für Live-Synchronisation
+      </div>
+      <button type="button" class="btn btn-secondary" onclick="disconnectSyncPairing()" style="font-size: 14px; padding: 10px 16px; width: 100%;">
+        🔄 <strong>Verbindung trennen / Neu koppeln</strong>
+      </button>
+    </div>
+
+    <!-- STATUS WENN NOCH NICHT VERBUNDEN (GERÄTENAME & KOPPLUNGSCODE) -->
+    <div id="sync-mobile-unconnected">
+      <div style="background: rgba(33, 150, 243, 0.08); border-left: 6px solid #2196F3; padding: 16px; border-radius: 8px; margin-bottom: 16px;">
+        <h3 style="margin: 0 0 8px 0; color: #1976D2;">📲 Dieses Gerät ist bereit zur Verbindung</h3>
+        <p style="margin: 0; font-size: 15px;">Gib die folgenden zwei Angaben in deiner Desktop-App auf dem Computer ein, um die verschlüsselte Live-Synchronisation zu starten:</p>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 14px; margin-bottom: 20px;">
+        <div style="background: var(--card-bg, #fff); border: 2px solid var(--border-color, #ccc); border-radius: 8px; padding: 14px 18px;">
+          <label for="sync-my-device-name" style="font-size: 14px; color: var(--text-muted, #666); font-weight: bold; display: block; margin-bottom: 6px;">
+            1. Dein Smartphone-Gerätename (am PC eingeben):
+          </label>
+          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <input type="text" id="sync-my-device-name" readonly value="Wird generiert..."
+                   aria-label="Gerätename. Mit TalkBack Zeichen für Zeichen durchwischen zum Buchstabieren oder den Buchstabier-Button drücken."
+                   style="font-size: 24px; font-weight: bold; color: #1976D2; letter-spacing: 2px; font-family: monospace; flex: 1; min-width: 160px; padding: 8px 12px; border: 1px solid #90CAF9; border-radius: 6px; background: #E3F2FD; cursor: pointer;"
+                   onclick="this.select()" />
+            <button type="button" class="btn btn-secondary" onclick="spellOutText(document.getElementById('sync-my-device-name').value, 'Gerätename')"
+                    aria-label="Gerätename Buchstabe für Buchstabe vorlesen" style="font-size: 14px; padding: 8px 14px;">
+              🔊 <strong>Buchstabieren</strong>
+            </button>
+            <button type="button" class="btn btn-secondary" onclick="copyToClipboard(document.getElementById('sync-my-device-name').value, 'Gerätename')"
+                    aria-label="Gerätename kopieren" style="font-size: 14px; padding: 8px 14px;">
+              📋 <strong>Kopieren</strong>
+            </button>
+          </div>
+        </div>
+
+        <div style="background: var(--card-bg, #fff); border: 2px solid var(--border-color, #ccc); border-radius: 8px; padding: 14px 18px;">
+          <label for="sync-my-code" style="font-size: 14px; color: var(--text-muted, #666); font-weight: bold; display: block; margin-bottom: 6px;">
+            2. Dein einmaliger Kopplungscode (am PC eingeben):
+          </label>
+          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <input type="text" id="sync-my-code" readonly value="--- ---"
+                   aria-label="Kopplungscode. Mit TalkBack Zeichen für Zeichen durchwischen zum Buchstabieren oder den Buchstabier-Button drücken."
+                   style="font-size: 28px; font-weight: bold; color: #2E7D32; letter-spacing: 4px; font-family: monospace; flex: 1; min-width: 160px; padding: 8px 12px; border: 1px solid #A5D6A7; border-radius: 6px; background: #E8F5E9; cursor: pointer;"
+                   onclick="this.select()" />
+            <button type="button" class="btn btn-secondary" onclick="spellOutText(document.getElementById('sync-my-code').value, 'Kopplungscode')"
+                    aria-label="Kopplungscode Ziffer für Ziffer vorlesen" style="font-size: 14px; padding: 8px 14px;">
+              🔊 <strong>Buchstabieren</strong>
+            </button>
+            <button type="button" class="btn btn-secondary" onclick="copyToClipboard(document.getElementById('sync-my-code').value, 'Kopplungscode')"
+                    aria-label="Kopplungscode kopieren" style="font-size: 14px; padding: 8px 14px;">
+              📋 <strong>Kopieren</strong>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-bottom: 16px;">
+        <button type="button" class="btn btn-secondary" onclick="generateNewSyncCode()" style="width: 100%;">
+          <span>🔄 <strong>Neuen Kopplungscode erzeugen</strong></span>
+        </button>
+      </div>
+
+      <div id="sync-receiver-status" style="padding: 12px 16px; border-radius: 6px; font-size: 15px; font-weight: bold; background: var(--bg-hover, #eee); text-align: center;">
+        Warte auf Synchronisation vom Computer...
+      </div>
+    </div>
+  </div>
+
+  <!-- BEREICH FÜR DESKTOP (SENDER) -->
+  <div id="sync-desktop-box" class="section-card" style="display: none;">
+    <!-- BEREITS GEKOPPELTES SMARTPHONE (1-KLICK ABGLEICH) -->
+    <div id="sync-desktop-paired-card" style="display: none; background: rgba(76, 175, 80, 0.12); border: 2px solid #4CAF50; border-radius: 8px; padding: 18px; margin-bottom: 20px;">
+      <h3 style="margin: 0 0 8px 0; color: #2E7D32; font-size: 19px;">📱 Verbundenes Smartphone</h3>
+      <p style="margin: 0 0 14px 0; font-size: 16px; line-height: 1.6;">
+        Gerätename: <strong id="sync-desktop-paired-name">Smartphone</strong><br>
+        Kopplungscode: <strong id="sync-desktop-paired-code">--- ---</strong><br>
+        Letzter Abgleich: <span id="sync-desktop-paired-time">Bisher noch nicht</span>
+      </p>
+      <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+        <button type="button" id="btn-quick-sync-desktop" onclick="triggerQuickSyncWithPaired()" class="btn btn-primary" style="font-size: 16px; padding: 12px 20px; background-color: #2E7D32;">
+          ⚡ <strong>Jetzt 1-Klick Abgleich mit <span id="sync-quick-btn-devname">Smartphone</span></strong>
+        </button>
+        <button type="button" onclick="editSyncConnection()" class="btn btn-secondary" style="font-size: 15px; padding: 12px 18px;">
+          ✏️ Code / Gerätename ändern
+        </button>
+      </div>
+    </div>
+
+    <div id="sync-desktop-form-box">
+      <div style="background: rgba(76, 175, 80, 0.08); border-left: 6px solid #4CAF50; padding: 16px; border-radius: 8px; margin-bottom: 16px;">
+        <h3 style="margin: 0 0 8px 0; color: #2E7D32;">💻 Smartphone-Verbindung einrichten</h3>
+        <p style="margin: 0; font-size: 15px;">Öffne die App auf deinem Smartphone, gehe auf <strong>Reiter 8 (Smartphone-Sync)</strong> und trage die dort angezeigten Daten hier ein:</p>
+      </div>
+
+      <form id="sync-desktop-form" onsubmit="handleStartSync(event)" class="accessible-form">
+        <div class="form-group">
+          <label for="input-target-device" class="field-label"><strong>1. Smartphone-Gerätename:</strong><span class="required-star">*</span></label>
+          <input type="text" id="input-target-device" class="large-input" placeholder="z. B. Handy-7X49" required style="font-weight: bold; font-size: 18px;">
+        </div>
+
+        <div class="form-group">
+          <label for="input-target-code" class="field-label"><strong>2. Kopplungscode vom Smartphone:</strong><span class="required-star">*</span></label>
+          <input type="text" id="input-target-code" class="large-input" placeholder="z. B. 682-419" required style="font-weight: bold; font-size: 20px; letter-spacing: 2px;">
+        </div>
+
+        <div class="form-actions" style="margin-top: 20px;">
+          <button type="submit" id="btn-trigger-sync" class="btn btn-primary" style="width: 100%; font-size: 18px; padding: 14px 24px; background-color: #2E7D32;">
+            <span>⚡ <strong>Jetzt sicher mit Smartphone synchronisieren (Enter)</strong></span>
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <div id="sync-sender-status" style="display: none; margin-top: 16px; padding: 14px 18px; border-radius: 6px; font-size: 16px; font-weight: bold;">
+    </div>
+  </div>
+</div>
+</main>
+
+<!-- Fußzeile -->
+<footer class="app-footer" role="contentinfo">
+<p><strong>Barrierefreie Finanzen v6.2.0</strong> – 100% Offline, AES-256 Verschlüsselung & Kauf-Planer. Optimiert für NVDA.</p>
+<p>Tastaturkürzel:<strong>1</strong>= Übersicht |<strong>2</strong>= Ausgabe |<strong>3</strong>= Einnahme |<strong>4</strong>= Umbuchen |<strong>5</strong>= Einstellungen |<strong>6</strong>= Konto-Optionen |<strong>7</strong>= Wunschliste |<strong>T</strong>= Zu Heute |<strong>L</strong>= Sofortsperre</p>
+</footer>
+
+</div>
+
+<script src="sync_engine.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

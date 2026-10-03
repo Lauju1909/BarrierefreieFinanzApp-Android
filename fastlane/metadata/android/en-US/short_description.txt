@@ -1,0 +1,1 @@
+﻿Accessible personal finance tracker with TalkBack support, savings pots, and secure offline storage.

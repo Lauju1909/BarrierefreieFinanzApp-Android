@@ -1,0 +1,8 @@
+﻿{
+  "appId": "de.lauri.finanzapp",
+  "appName": "Haushaltsbuch Barrierefrei",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  }
+}

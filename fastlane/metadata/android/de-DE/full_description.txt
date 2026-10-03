@@ -1,0 +1,10 @@
+﻿Haushaltsbuch Barrierefrei ist eine intuitive und sichere Finanz-App, entwickelt für Menschen mit Sehbehinderung, Blindheit und alle, die eine klare, barrierefreie Finanzverwaltung schätzen.
+
+Features:
+- Optimiert für Screenreader (TalkBack, NVDA/JAWS-kompatible Bedienmuster)
+- Hoher Kontrast, anpassbare Schriftgrößen und OLED-Dark-Mode
+- Flexible Zeiträume: Monatliche, wöchentliche oder benutzerdefinierte Abrechnungen
+- Spartöpfe, Daueraufträge, Kategorien und Wunschlisten
+- Lokaler, verschlüsselter Offline-Tresor (Keine Cloud-Pflicht, 100% Datenschutz)
+- Optionaler Schutz per PIN und Biometrie (Fingerabdruck)
+- Datenexport und -import (Backup)

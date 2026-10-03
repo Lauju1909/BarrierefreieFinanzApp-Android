@@ -1,0 +1,10 @@
+﻿Haushaltsbuch Barrierefrei is an intuitive and privacy-focused personal finance manager designed specifically for blind, visually impaired, and accessibility-conscious users.
+
+Features:
+- Optimized for screen readers (TalkBack, accessible live-regions and shortcuts)
+- High-contrast themes, scalable typography, and OLED dark mode
+- Flexible budget periods: Monthly, weekly, or custom intervals
+- Savings pots, recurring transactions, categories, and wishlists
+- Local encrypted vault for 100% offline data privacy (zero tracking)
+- Optional PIN and biometric security
+- Easy data backup and export

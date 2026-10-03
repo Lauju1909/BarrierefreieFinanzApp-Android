@@ -1,0 +1,1 @@
+﻿Barrierefreies Haushaltsbuch mit TalkBack-Unterstützung, Spartöpfen und sicherem Offline-Tresor.
