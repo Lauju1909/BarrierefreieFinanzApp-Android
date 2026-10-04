@@ -63,7 +63,17 @@ Builds:
     gradle:
       - assembleRelease
 
+  - versionName: '6.9.2'
+    versionCode: 14
+    commit: v6.9.2
+    subdir: android
+    init:
+      - npm ci
+      - npx cap sync android
+    gradle:
+      - assembleRelease
+
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
-CurrentVersion: '6.9.1'
-CurrentVersionCode: 13
+CurrentVersion: '6.9.2'
+CurrentVersionCode: 14
