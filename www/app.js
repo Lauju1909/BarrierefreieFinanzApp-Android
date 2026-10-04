@@ -2149,15 +2149,24 @@ function renderAccountsViewList() {
       `;
     }
 
+    const spokenCurBal = formatCurrencySpoken(curBal);
+    const spokenInitBal = formatCurrencySpoken(acc.initialBalance || 0);
+    const fullAccountSpeech = `${acc.name}, ${typeLabel}. Aktueller Kontostand: ${spokenCurBal}. Startguthaben: ${spokenInitBal}.`;
+
     return `
-      <div class="settings-account-item" style="display: flex; flex-direction: column; background: var(--card-bg, #ffffff); border: 2px solid var(--border-color, #e0e0e0); border-radius: 8px; padding: 14px 18px; gap: 10px;">
+      <div class="settings-account-item" 
+           role="region" 
+           tabindex="0" 
+           aria-label="${escapeHTML(fullAccountSpeech)}"
+           onclick="if (typeof announceNVDA === 'function') announceNVDA('${escapeHTML(fullAccountSpeech)}', true)"
+           style="display: flex; flex-direction: column; background: var(--card-bg, #ffffff); border: 2px solid var(--border-color, #e0e0e0); border-radius: 8px; padding: 14px 18px; gap: 10px; cursor: pointer;">
         <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
           <div style="display: flex; align-items: center; gap: 14px; flex: 1; min-width: 220px;">
             ${iconHtml}
             <div>
               <div style="font-size: 18px; font-weight: bold; color: var(--text-primary);">${escapeHTML(acc.name)}</div>
               <div style="font-size: 14px; color: var(--text-secondary); margin-top: 2px;">
-                ${escapeHTML(typeLabel)} | Kontostand aktuell: <strong style="color: ${curBal >= 0 ? '#2E7D32' : '#C62828'}; font-size: 15px;">${curBalStr}</strong> <span style="font-size: 12px; color: var(--text-muted, #777);">(Start: ${initBalStr})</span>
+                ${escapeHTML(typeLabel)} | Kontostand aktuell: <strong style="color: ${curBal >= 0 ? '#2E7D32' : '#C62828'}; font-size: 15px;" role="text" aria-label="Aktueller Kontostand: ${escapeHTML(spokenCurBal)}">${curBalStr}</strong> <span style="font-size: 12px; color: var(--text-muted, #777);" role="text" aria-label="Startguthaben: ${escapeHTML(spokenInitBal)}">(Start: ${initBalStr})</span>
               </div>
               <div style="margin-top: 4px;">
                 ${backupBadge}${dispoBadge}
@@ -2339,6 +2348,9 @@ function populateFilterAccountDropdown() {
 function populateAllAccountDropdowns() {
   ensureAccountsInitialized();
   
+  const todayStr = new Date().toISOString().split('T')[0];
+  const currentBalances = calculateBalancesUpToDate(todayStr);
+
   const dropdownIds = [
     'exp-account',
     'inc-account',
@@ -2359,7 +2371,10 @@ function populateAllAccountDropdowns() {
 
     sel.innerHTML = appState.accounts.map(acc => {
       const icon = acc.icon || ACCOUNT_TYPE_ICONS[acc.type] || '💳';
-      return `<option value="${escapeHTML(acc.id)}" data-emoji="${icon}">${escapeHTML(acc.name)}</option>`;
+      const bal = currentBalances[acc.id] !== undefined ? currentBalances[acc.id] : (acc.initialBalance || 0);
+      const balText = formatCurrency(bal);
+      const spokenText = `${acc.name}, Kontostand: ${formatCurrencySpoken(bal)}`;
+      return `<option value="${escapeHTML(acc.id)}" data-emoji="${icon}" aria-label="${escapeHTML(spokenText)}">${escapeHTML(acc.name)} (${balText})</option>`;
     }).join('');
 
     if (currentVal && appState.accounts.some(a => a.id === currentVal)) {
@@ -2520,7 +2535,12 @@ function openAccountModal(accId) {
       const todayStr = new Date().toISOString().split('T')[0];
       const balances = calculateBalancesUpToDate(todayStr);
       const curBal = balances[acc.id] !== undefined ? balances[acc.id] : (acc.initialBalance || 0);
+      const spokenCurBal = formatCurrencySpoken(curBal);
       curBalVal.textContent = formatCurrency(curBal);
+      curBalVal.setAttribute('role', 'text');
+      curBalVal.setAttribute('aria-label', `Aktueller Kontostand: ${spokenCurBal}`);
+      curBalBox.setAttribute('role', 'region');
+      curBalBox.setAttribute('aria-label', `Aktueller berechneter Kontostand: ${spokenCurBal}`);
     }
 
     // Auto-Deckung
@@ -4186,14 +4206,35 @@ function updateOverview() {
     if (expenseSummarySub) expenseSummarySub.textContent = `${dayStats.expenseList.length} Ausgabe(n) an diesem Tag`;
     if (transferSummarySub) transferSummarySub.textContent = `${dayStats.transferList.length} Umbuchung(en) an diesem Tag`;
 
-    if (cardIncome) cardIncome.textContent = `+ ${formatCurrency(dayStats.dayIncome)}`;
-    if (cardExpense) cardExpense.textContent = `- ${formatCurrency(dayStats.dayExpense)}`;
-    if (cardTransfer) cardTransfer.textContent = formatCurrency(dayStats.dayTransfer || 0);
-    if (cardTotal) cardTotal.textContent = formatCurrency(dayStats.balances.total);
+    if (cardIncome) {
+      cardIncome.textContent = `+ ${formatCurrency(dayStats.dayIncome)}`;
+      cardIncome.setAttribute('aria-label', `Einnahmen am ${dayFormatted}: Plus ${formatCurrencySpoken(dayStats.dayIncome)}`);
+    }
+    if (cardExpense) {
+      cardExpense.textContent = `- ${formatCurrency(dayStats.dayExpense)}`;
+      cardExpense.setAttribute('aria-label', `Ausgaben am ${dayFormatted}: Minus ${formatCurrencySpoken(dayStats.dayExpense)}`);
+    }
+    if (cardTransfer) {
+      cardTransfer.textContent = formatCurrency(dayStats.dayTransfer || 0);
+      cardTransfer.setAttribute('aria-label', `Umbuchungen am ${dayFormatted}: ${formatCurrencySpoken(dayStats.dayTransfer || 0)}`);
+    }
+    if (cardTotal) {
+      cardTotal.textContent = formatCurrency(dayStats.balances.total);
+      cardTotal.setAttribute('aria-label', `Gesamtguthaben am ${dayFormatted}: ${formatCurrencySpoken(dayStats.balances.total)}`);
+    }
 
     if (monthLeftover) {
       monthLeftover.textContent = (dayStats.dayLeftover >= 0 ? '+ ' : '') + formatCurrency(dayStats.dayLeftover);
       monthLeftover.style.color = dayStats.dayLeftover >= 0 ? 'var(--accent-income)' : 'var(--accent-expense)';
+      monthLeftover.setAttribute('aria-label', `Tagesergebnis am ${dayFormatted}: ${dayStats.dayLeftover >= 0 ? 'Plus ' : 'Minus '}${formatCurrencySpoken(Math.abs(dayStats.dayLeftover))}`);
+    }
+
+    const heroCardDay = document.querySelector('.balance-hero-card');
+    if (heroCardDay) {
+      heroCardDay.setAttribute('role', 'region');
+      const speechText = `4. Gesamt über alle Konten am ${dayFormatted}: ${formatCurrencySpoken(dayStats.balances.total)}. Tagesergebnis: ${dayStats.dayLeftover >= 0 ? 'Plus ' : 'Minus '}${formatCurrencySpoken(Math.abs(dayStats.dayLeftover))}.`;
+      heroCardDay.setAttribute('aria-label', speechText);
+      heroCardDay.onclick = () => { if (typeof announceNVDA === 'function') announceNVDA(speechText, true); };
     }
 
     renderAccountCardBalances(dayStats.balances);
@@ -4260,14 +4301,35 @@ function updateOverview() {
     if (expenseSummarySub) expenseSummarySub.textContent = `${expenseList.length} Ausgabe(n) in dieser Woche`;
     if (transferSummarySub) transferSummarySub.textContent = `${transferList.length} Umbuchung(en) in dieser Woche`;
 
-    if (cardIncome) cardIncome.textContent = `+ ${formatCurrency(weekIncome)}`;
-    if (cardExpense) cardExpense.textContent = `- ${formatCurrency(weekExpense)}`;
-    if (cardTransfer) cardTransfer.textContent = formatCurrency(weekTransfer);
-    if (cardTotal) cardTotal.textContent = formatCurrency(weekBalances.total);
+    if (cardIncome) {
+      cardIncome.textContent = `+ ${formatCurrency(weekIncome)}`;
+      cardIncome.setAttribute('aria-label', `Einnahmen in KW ${wb.weekNum}: Plus ${formatCurrencySpoken(weekIncome)}`);
+    }
+    if (cardExpense) {
+      cardExpense.textContent = `- ${formatCurrency(weekExpense)}`;
+      cardExpense.setAttribute('aria-label', `Ausgaben in KW ${wb.weekNum}: Minus ${formatCurrencySpoken(weekExpense)}`);
+    }
+    if (cardTransfer) {
+      cardTransfer.textContent = formatCurrency(weekTransfer);
+      cardTransfer.setAttribute('aria-label', `Umbuchungen in KW ${wb.weekNum}: ${formatCurrencySpoken(weekTransfer)}`);
+    }
+    if (cardTotal) {
+      cardTotal.textContent = formatCurrency(weekBalances.total);
+      cardTotal.setAttribute('aria-label', `Gesamtguthaben am Ende von KW ${wb.weekNum}: ${formatCurrencySpoken(weekBalances.total)}`);
+    }
 
     if (monthLeftover) {
       monthLeftover.textContent = (weekLeftover >= 0 ? '+ ' : '') + formatCurrency(weekLeftover);
       monthLeftover.style.color = weekLeftover >= 0 ? 'var(--accent-income)' : 'var(--accent-expense)';
+      monthLeftover.setAttribute('aria-label', `Wochenergebnis: ${weekLeftover >= 0 ? 'Plus ' : 'Minus '}${formatCurrencySpoken(Math.abs(weekLeftover))}`);
+    }
+
+    const heroCardWeek = document.querySelector('.balance-hero-card');
+    if (heroCardWeek) {
+      heroCardWeek.setAttribute('role', 'region');
+      const speechText = `4. Gesamtguthaben am Ende von Kalenderwoche ${wb.weekNum}: ${formatCurrencySpoken(weekBalances.total)}. Wochenergebnis: ${weekLeftover >= 0 ? 'Plus ' : 'Minus '}${formatCurrencySpoken(Math.abs(weekLeftover))}.`;
+      heroCardWeek.setAttribute('aria-label', speechText);
+      heroCardWeek.onclick = () => { if (typeof announceNVDA === 'function') announceNVDA(speechText, true); };
     }
 
     renderAccountCardBalances(weekBalances);
@@ -4299,14 +4361,35 @@ function updateOverview() {
     if (expenseSummarySub) expenseSummarySub.textContent = `${stats.expenseList.length} Ausgabe(n) in diesem Monat`;
     if (transferSummarySub) transferSummarySub.textContent = `${stats.transferList.length} Umbuchung(en) & Sparpläne im ${monthName}`;
 
-    if (cardIncome) cardIncome.textContent = `+ ${formatCurrency(stats.totalIncome)}`;
-    if (cardExpense) cardExpense.textContent = `- ${formatCurrency(stats.totalExpense)}`;
-    if (cardTransfer) cardTransfer.textContent = formatCurrency(stats.totalTransfer || 0);
-    if (cardTotal) cardTotal.textContent = formatCurrency(stats.balances.total);
+    if (cardIncome) {
+      cardIncome.textContent = `+ ${formatCurrency(stats.totalIncome)}`;
+      cardIncome.setAttribute('aria-label', `Einnahmen im ${monthName}: Plus ${formatCurrencySpoken(stats.totalIncome)}`);
+    }
+    if (cardExpense) {
+      cardExpense.textContent = `- ${formatCurrency(stats.totalExpense)}`;
+      cardExpense.setAttribute('aria-label', `Ausgaben im ${monthName}: Minus ${formatCurrencySpoken(stats.totalExpense)}`);
+    }
+    if (cardTransfer) {
+      cardTransfer.textContent = formatCurrency(stats.totalTransfer || 0);
+      cardTransfer.setAttribute('aria-label', `Umbuchungen im ${monthName}: ${formatCurrencySpoken(stats.totalTransfer || 0)}`);
+    }
+    if (cardTotal) {
+      cardTotal.textContent = formatCurrency(stats.balances.total);
+      cardTotal.setAttribute('aria-label', `Gesamtguthaben Ende ${monthName} ${selectedYear}: ${formatCurrencySpoken(stats.balances.total)}`);
+    }
 
     if (monthLeftover) {
       monthLeftover.textContent = (stats.leftover >= 0 ? '+ ' : '') + formatCurrency(stats.leftover);
       monthLeftover.style.color = stats.leftover >= 0 ? 'var(--accent-income)' : 'var(--accent-expense)';
+      monthLeftover.setAttribute('aria-label', `Monatsergebnis ${monthName}: ${stats.leftover >= 0 ? 'Plus ' : 'Minus '}${formatCurrencySpoken(Math.abs(stats.leftover))}`);
+    }
+
+    const heroCardMonth = document.querySelector('.balance-hero-card');
+    if (heroCardMonth) {
+      heroCardMonth.setAttribute('role', 'region');
+      const speechText = `4. Gesamtguthaben Ende ${monthName}: ${formatCurrencySpoken(stats.balances.total)}. Monatsergebnis: ${stats.leftover >= 0 ? 'Plus ' : 'Minus '}${formatCurrencySpoken(Math.abs(stats.leftover))}.`;
+      heroCardMonth.setAttribute('aria-label', speechText);
+      heroCardMonth.onclick = () => { if (typeof announceNVDA === 'function') announceNVDA(speechText, true); };
     }
 
     renderAccountCardBalances(stats.balances);
@@ -4375,14 +4458,35 @@ function updateOverview() {
   if (expenseSummarySub) expenseSummarySub.textContent = `${allPeriodExpense.length} Ausgabe(n) im Zeitraum`;
   if (transferSummarySub) transferSummarySub.textContent = `${allPeriodTransfer.length} Umbuchung(en) im Zeitraum`;
 
-  if (cardIncome) cardIncome.textContent = `+ ${formatCurrency(grandIncome)}`;
-  if (cardExpense) cardExpense.textContent = `- ${formatCurrency(grandExpense)}`;
-  if (cardTransfer) cardTransfer.textContent = formatCurrency(grandTransfer);
-  if (cardTotal) cardTotal.textContent = formatCurrency(periodEndBalances.total);
+  if (cardIncome) {
+    cardIncome.textContent = `+ ${formatCurrency(grandIncome)}`;
+    cardIncome.setAttribute('aria-label', `Einnahmen im Zeitraum ${titlePeriod}: Plus ${formatCurrencySpoken(grandIncome)}`);
+  }
+  if (cardExpense) {
+    cardExpense.textContent = `- ${formatCurrency(grandExpense)}`;
+    cardExpense.setAttribute('aria-label', `Ausgaben im Zeitraum ${titlePeriod}: Minus ${formatCurrencySpoken(grandExpense)}`);
+  }
+  if (cardTransfer) {
+    cardTransfer.textContent = formatCurrency(grandTransfer);
+    cardTransfer.setAttribute('aria-label', `Umbuchungen im Zeitraum ${titlePeriod}: ${formatCurrencySpoken(grandTransfer)}`);
+  }
+  if (cardTotal) {
+    cardTotal.textContent = formatCurrency(periodEndBalances.total);
+    cardTotal.setAttribute('aria-label', `Gesamtguthaben Ende ${titlePeriod}: ${formatCurrencySpoken(periodEndBalances.total)}`);
+  }
 
   if (monthLeftover) {
     monthLeftover.textContent = (grandLeftover >= 0 ? '+ ' : '') + formatCurrency(grandLeftover);
     monthLeftover.style.color = grandLeftover >= 0 ? 'var(--accent-income)' : 'var(--accent-expense)';
+    monthLeftover.setAttribute('aria-label', `Gesamtergebnis im Zeitraum ${titlePeriod}: ${grandLeftover >= 0 ? 'Plus ' : 'Minus '}${formatCurrencySpoken(Math.abs(grandLeftover))}`);
+  }
+
+  const heroCardPeriod = document.querySelector('.balance-hero-card');
+  if (heroCardPeriod) {
+    heroCardPeriod.setAttribute('role', 'region');
+    const speechText = `4. Gesamtguthaben Ende ${titlePeriod}: ${formatCurrencySpoken(periodEndBalances.total)}. Gesamtergebnis: ${grandLeftover >= 0 ? 'Plus ' : 'Minus '}${formatCurrencySpoken(Math.abs(grandLeftover))}.`;
+    heroCardPeriod.setAttribute('aria-label', speechText);
+    heroCardPeriod.onclick = () => { if (typeof announceNVDA === 'function') announceNVDA(speechText, true); };
   }
 
   renderAccountCardBalances(periodEndBalances);
@@ -4424,15 +4528,27 @@ function renderAccountCardBalances(balances) {
     const colorClass = bal >= 0 ? 'income' : 'expense';
     const icon = acc.icon || ACCOUNT_TYPE_ICONS[acc.type] || '💳';
     const hintText = acc.hint || getAccountTypeDefaultHint(acc.type);
+    const spokenBal = formatCurrencySpoken(bal);
+    const fullSpeechLabel = `${acc.name}: Kontostand ${spokenBal}`;
 
     return `
-      <div class="account-card" tabindex="0" aria-label="${escapeHTML(acc.name)}: ${formatCurrency(bal)}">
-        <div class="acc-header">
-          <span class="acc-icon" aria-hidden="true">${icon}</span>
+      <div class="account-card" 
+           role="region" 
+           tabindex="0" 
+           aria-label="${escapeHTML(fullSpeechLabel)}"
+           onclick="if (typeof announceNVDA === 'function') announceNVDA('${escapeHTML(fullSpeechLabel)}', true)"
+           style="cursor: pointer;">
+        <div class="acc-header" aria-hidden="true">
+          <span class="acc-icon">${icon}</span>
           <span class="acc-name">${escapeHTML(acc.name)}</span>
         </div>
-        <div class="acc-balance ${colorClass}" id="acc-balance-${escapeHTML(acc.id)}">${formatCurrency(bal)}</div>
-        <span class="acc-hint">${escapeHTML(hintText)}</span>
+        <div class="acc-balance ${colorClass}" id="acc-balance-${escapeHTML(acc.id)}" 
+             role="text" 
+             aria-label="Kontostand: ${escapeHTML(spokenBal)}">
+          ${formatCurrency(bal)}
+        </div>
+        <span class="acc-hint" aria-hidden="true">${escapeHTML(hintText)}</span>
+        <span class="sr-only">${escapeHTML(fullSpeechLabel)}. ${escapeHTML(hintText)}</span>
       </div>
     `;
   }).join('');
@@ -8288,6 +8404,27 @@ function formatCurrency(num) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   }) + ' €';
+}
+
+// Barrierefreie Sprachausgabe für Screenreader (TalkBack & NVDA) ohne verschluckte Euro-Zeichen
+function formatCurrencySpoken(num) {
+  const val = Number(num || 0);
+  if (isNaN(val)) return '0 Euro';
+  const isNegative = val < 0;
+  const absVal = Math.abs(val);
+  const euros = Math.floor(absVal);
+  const cents = Math.round((absVal - euros) * 100);
+
+  let parts = [];
+  if (isNegative) parts.push('Minus');
+
+  parts.push(`${euros.toLocaleString('de-DE')} Euro`);
+
+  if (cents > 0) {
+    parts.push(`und ${cents} Cent`);
+  }
+
+  return parts.join(' ');
 }
 
 function formatDateDisplay(dateStr) {
