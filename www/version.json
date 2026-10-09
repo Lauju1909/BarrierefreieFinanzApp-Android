@@ -1,9 +1,14 @@
 {
-  "version": "6.9.1",
+  "version": "6.9.5",
   "name": "Barrierefreie Finanz-App & Haushaltsbuch",
-  "buildDate": "2026-10-04",
+  "buildDate": "2026-10-09",
   "features": [
-    "Barrierefreie Sprachausgabe für Kontobeträge: Vollständige Vorlese-Unterstützung für Android TalkBack und Screenreader (Euro und Cent als ausgeschriebene Wörter für alle Kontokarten, Gesamtguthaben, Periodensalden und Kontobearbeitung)",
+    "🤝 Geliehenes & Verliehenes Geld (Private Schulden & Forderungen): Vollständige Erfassung, Verfolgung und Verwaltung von Geldleihgaben für Freunde und Familie mit Teilrückzahlungen, Fortschrittsbalken und automatischer Gegenbuchung",
+    "🧹 Bedarfsgesteuerte Monatsübersicht: Intelligentes Ausblenden leerer Bereiche in Reiter 1. 'Laufende Kredite & Raten' (bei 0 Krediten), 'Umbuchungen & Sparpläne' (bei 0 Umbuchungen im Monat) und 'Geliehenes Geld' (bei 0 offenen Leihgaben) nehmen keinen Platz mehr weg und erscheinen nur bei Bedarf",
+    "📱 E2E-Synchronisation für Leihgaben: Verschlüsselte Ende-zu-Ende-Übertragung aller offenen und beglichenen Leihgaben über das asynchrone Postfach zwischen PC und Smartphone",
+    "Wiederherstellung Buchungsanzeige in der Übersicht (Reiter 1): Alle Einnahmen-, Ausgaben- und Umbuchungs-Listen werden beim Ausklappen der Akkordeons wieder sofort, barrierefrei und vollständig angezeigt",
+    "Wiederherstellung Bank-Kontoauszug / CSV-Import: Die Import-Engine zum automatischen Einlesen von Bank-Umsätzen (.csv/.txt) mit Erkennung von Datum, Betrag und Kategorien wurde vollständig reaktiviert",
+    "Fehlerbehebung Einkaufsliste: Das Abbuchen getätigter Einkäufe direkt als Ausgabe ins Haushaltsbuch läuft nun ohne Unterbrechung fehlerfrei durch",
     "Asynchroner E2E-Postfach-Sync (Briefkasten-Synchronisation): Computer und Smartphone können ab sofort völlig unabhängig voneinander synchronisieren! Kein gleichzeitiges Einschalten oder gemeinsames WLAN mehr nötig. Finanzdaten werden versiegelt in einem verschlüsselten E2E-Postfach hinterlegt und beim nächsten Start automatisch abgerufen",
     "Wiederherstellung Wunschliste & Sparziele (Reiter 7): Alle Wunschlisten-Funktionen (renderWishlist, Sparziel-Verknüpfung, Einmalkauf- und Abo-Erfüllung) wurden wiederhergestellt. Alle bisher im verschlüsselten Tresor gespeicherten Wünsche werden nun wieder sofort und vollständig angezeigt",
     "Fehlerbehebung PIN-Entsperrung: Beseitigt Fehlalarme beim Entsperren mit korrekter PIN. Krypto-Entschlüsselung und Benutzeroberfläche sind nun strikt getrennt, sodass Darstellungsfehler niemals als PIN-Fehlversuch gewertet werden",

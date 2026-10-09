@@ -1,7 +1,7 @@
 // ============================================================================
 // 1. GLOBALE KONSTANTEN, KATEGORIE-DATENBANK & INITIALER STATE
 // ============================================================================
-const CURRENT_APP_VERSION = 'v6.8.2';
+const CURRENT_APP_VERSION = 'v6.9.5';
 const STORAGE_DATA_KEY = 'barrierefreie_finanzen_enc_v1';
 const STORAGE_SALT_KEY = 'barrierefreie_finanzen_salt_v1';
 const STORAGE_THEME_KEY = 'barrierefreie_finanzen_theme_v1';
@@ -624,7 +624,8 @@ let appState = {
   budgets: {},
   customCategories: { exp: {}, inc: {}, trf: {} },
   wishlist: [],
-  shoppingList: []
+  shoppingList: [],
+  peerLoans: []
 };
 
 // ============================================================================
@@ -2371,24 +2372,15 @@ function renderAccountsViewList() {
       `;
     }
 
-    const spokenCurBal = formatCurrencySpoken(curBal);
-    const spokenInitBal = formatCurrencySpoken(acc.initialBalance || 0);
-    const fullAccountSpeech = `${acc.name}, ${typeLabel}. Aktueller Kontostand: ${spokenCurBal}. Startguthaben: ${spokenInitBal}.`;
-
     return `
-      <div class="settings-account-item" 
-           role="region" 
-           tabindex="0" 
-           aria-label="${escapeHTML(fullAccountSpeech)}"
-           onclick="if (typeof announceNVDA === 'function') announceNVDA('${escapeHTML(fullAccountSpeech)}', true)"
-           style="display: flex; flex-direction: column; background: var(--card-bg, #ffffff); border: 2px solid var(--border-color, #e0e0e0); border-radius: 8px; padding: 14px 18px; gap: 10px; cursor: pointer;">
+      <div class="settings-account-item" style="display: flex; flex-direction: column; background: var(--card-bg, #ffffff); border: 2px solid var(--border-color, #e0e0e0); border-radius: 8px; padding: 14px 18px; gap: 10px;">
         <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
           <div style="display: flex; align-items: center; gap: 14px; flex: 1; min-width: 220px;">
             ${iconHtml}
             <div>
               <div style="font-size: 18px; font-weight: bold; color: var(--text-primary);">${escapeHTML(acc.name)}</div>
               <div style="font-size: 14px; color: var(--text-secondary); margin-top: 2px;">
-                ${escapeHTML(typeLabel)} | Kontostand aktuell: <strong style="color: ${curBal >= 0 ? '#2E7D32' : '#C62828'}; font-size: 15px;" role="text" aria-label="Aktueller Kontostand: ${escapeHTML(spokenCurBal)}">${curBalStr}</strong> <span style="font-size: 12px; color: var(--text-muted, #777);" role="text" aria-label="Startguthaben: ${escapeHTML(spokenInitBal)}">(Start: ${initBalStr})</span>
+                ${escapeHTML(typeLabel)} | Kontostand aktuell: <strong style="color: ${curBal >= 0 ? '#2E7D32' : '#C62828'}; font-size: 15px;">${curBalStr}</strong> <span style="font-size: 12px; color: var(--text-muted, #777);">(Start: ${initBalStr})</span>
               </div>
               <div style="margin-top: 4px;">
                 ${backupBadge}${dispoBadge}
@@ -2574,9 +2566,6 @@ function populateFilterAccountDropdown() {
 function populateAllAccountDropdowns() {
   ensureAccountsInitialized();
   
-  const todayStr = new Date().toISOString().split('T')[0];
-  const currentBalances = calculateBalancesUpToDate(todayStr);
-
   const dropdownIds = [
     'exp-account',
     'inc-account',
@@ -2597,10 +2586,7 @@ function populateAllAccountDropdowns() {
 
     sel.innerHTML = appState.accounts.map(acc => {
       const icon = acc.icon || ACCOUNT_TYPE_ICONS[acc.type] || '💳';
-      const bal = currentBalances[acc.id] !== undefined ? currentBalances[acc.id] : (acc.initialBalance || 0);
-      const balText = formatCurrency(bal);
-      const spokenText = `${acc.name}, Kontostand: ${formatCurrencySpoken(bal)}`;
-      return `<option value="${escapeHTML(acc.id)}" data-emoji="${icon}" aria-label="${escapeHTML(spokenText)}">${escapeHTML(acc.name)} (${balText})</option>`;
+      return `<option value="${escapeHTML(acc.id)}" data-emoji="${icon}">${escapeHTML(acc.name)}</option>`;
     }).join('');
 
     if (currentVal && appState.accounts.some(a => a.id === currentVal)) {
@@ -2761,12 +2747,7 @@ function openAccountModal(accId) {
       const todayStr = new Date().toISOString().split('T')[0];
       const balances = calculateBalancesUpToDate(todayStr);
       const curBal = balances[acc.id] !== undefined ? balances[acc.id] : (acc.initialBalance || 0);
-      const spokenCurBal = formatCurrencySpoken(curBal);
       curBalVal.textContent = formatCurrency(curBal);
-      curBalVal.setAttribute('role', 'text');
-      curBalVal.setAttribute('aria-label', `Aktueller Kontostand: ${spokenCurBal}`);
-      curBalBox.setAttribute('role', 'region');
-      curBalBox.setAttribute('aria-label', `Aktueller berechneter Kontostand: ${spokenCurBal}`);
     }
 
     // Auto-Deckung
@@ -4432,35 +4413,14 @@ function updateOverview() {
     if (expenseSummarySub) expenseSummarySub.textContent = `${dayStats.expenseList.length} Ausgabe(n) an diesem Tag`;
     if (transferSummarySub) transferSummarySub.textContent = `${dayStats.transferList.length} Umbuchung(en) an diesem Tag`;
 
-    if (cardIncome) {
-      cardIncome.textContent = `+ ${formatCurrency(dayStats.dayIncome)}`;
-      cardIncome.setAttribute('aria-label', `Einnahmen am ${dayFormatted}: Plus ${formatCurrencySpoken(dayStats.dayIncome)}`);
-    }
-    if (cardExpense) {
-      cardExpense.textContent = `- ${formatCurrency(dayStats.dayExpense)}`;
-      cardExpense.setAttribute('aria-label', `Ausgaben am ${dayFormatted}: Minus ${formatCurrencySpoken(dayStats.dayExpense)}`);
-    }
-    if (cardTransfer) {
-      cardTransfer.textContent = formatCurrency(dayStats.dayTransfer || 0);
-      cardTransfer.setAttribute('aria-label', `Umbuchungen am ${dayFormatted}: ${formatCurrencySpoken(dayStats.dayTransfer || 0)}`);
-    }
-    if (cardTotal) {
-      cardTotal.textContent = formatCurrency(dayStats.balances.total);
-      cardTotal.setAttribute('aria-label', `Gesamtguthaben am ${dayFormatted}: ${formatCurrencySpoken(dayStats.balances.total)}`);
-    }
+    if (cardIncome) cardIncome.textContent = `+ ${formatCurrency(dayStats.dayIncome)}`;
+    if (cardExpense) cardExpense.textContent = `- ${formatCurrency(dayStats.dayExpense)}`;
+    if (cardTransfer) cardTransfer.textContent = formatCurrency(dayStats.dayTransfer || 0);
+    if (cardTotal) cardTotal.textContent = formatCurrency(dayStats.balances.total);
 
     if (monthLeftover) {
       monthLeftover.textContent = (dayStats.dayLeftover >= 0 ? '+ ' : '') + formatCurrency(dayStats.dayLeftover);
       monthLeftover.style.color = dayStats.dayLeftover >= 0 ? 'var(--accent-income)' : 'var(--accent-expense)';
-      monthLeftover.setAttribute('aria-label', `Tagesergebnis am ${dayFormatted}: ${dayStats.dayLeftover >= 0 ? 'Plus ' : 'Minus '}${formatCurrencySpoken(Math.abs(dayStats.dayLeftover))}`);
-    }
-
-    const heroCardDay = document.querySelector('.balance-hero-card');
-    if (heroCardDay) {
-      heroCardDay.setAttribute('role', 'region');
-      const speechText = `4. Gesamt über alle Konten am ${dayFormatted}: ${formatCurrencySpoken(dayStats.balances.total)}. Tagesergebnis: ${dayStats.dayLeftover >= 0 ? 'Plus ' : 'Minus '}${formatCurrencySpoken(Math.abs(dayStats.dayLeftover))}.`;
-      heroCardDay.setAttribute('aria-label', speechText);
-      heroCardDay.onclick = () => { if (typeof announceNVDA === 'function') announceNVDA(speechText, true); };
     }
 
     renderAccountCardBalances(dayStats.balances);
@@ -4472,6 +4432,8 @@ function updateOverview() {
     renderExpenseRankings(dayStats.expenseList);
     checkLiquidityWarning(dayStats.balances);
     renderBudgetsList();
+    renderOverviewCreditAccordion();
+    renderOverviewPeerLoans();
     return;
   }
 
@@ -4527,35 +4489,14 @@ function updateOverview() {
     if (expenseSummarySub) expenseSummarySub.textContent = `${expenseList.length} Ausgabe(n) in dieser Woche`;
     if (transferSummarySub) transferSummarySub.textContent = `${transferList.length} Umbuchung(en) in dieser Woche`;
 
-    if (cardIncome) {
-      cardIncome.textContent = `+ ${formatCurrency(weekIncome)}`;
-      cardIncome.setAttribute('aria-label', `Einnahmen in KW ${wb.weekNum}: Plus ${formatCurrencySpoken(weekIncome)}`);
-    }
-    if (cardExpense) {
-      cardExpense.textContent = `- ${formatCurrency(weekExpense)}`;
-      cardExpense.setAttribute('aria-label', `Ausgaben in KW ${wb.weekNum}: Minus ${formatCurrencySpoken(weekExpense)}`);
-    }
-    if (cardTransfer) {
-      cardTransfer.textContent = formatCurrency(weekTransfer);
-      cardTransfer.setAttribute('aria-label', `Umbuchungen in KW ${wb.weekNum}: ${formatCurrencySpoken(weekTransfer)}`);
-    }
-    if (cardTotal) {
-      cardTotal.textContent = formatCurrency(weekBalances.total);
-      cardTotal.setAttribute('aria-label', `Gesamtguthaben am Ende von KW ${wb.weekNum}: ${formatCurrencySpoken(weekBalances.total)}`);
-    }
+    if (cardIncome) cardIncome.textContent = `+ ${formatCurrency(weekIncome)}`;
+    if (cardExpense) cardExpense.textContent = `- ${formatCurrency(weekExpense)}`;
+    if (cardTransfer) cardTransfer.textContent = formatCurrency(weekTransfer);
+    if (cardTotal) cardTotal.textContent = formatCurrency(weekBalances.total);
 
     if (monthLeftover) {
       monthLeftover.textContent = (weekLeftover >= 0 ? '+ ' : '') + formatCurrency(weekLeftover);
       monthLeftover.style.color = weekLeftover >= 0 ? 'var(--accent-income)' : 'var(--accent-expense)';
-      monthLeftover.setAttribute('aria-label', `Wochenergebnis: ${weekLeftover >= 0 ? 'Plus ' : 'Minus '}${formatCurrencySpoken(Math.abs(weekLeftover))}`);
-    }
-
-    const heroCardWeek = document.querySelector('.balance-hero-card');
-    if (heroCardWeek) {
-      heroCardWeek.setAttribute('role', 'region');
-      const speechText = `4. Gesamtguthaben am Ende von Kalenderwoche ${wb.weekNum}: ${formatCurrencySpoken(weekBalances.total)}. Wochenergebnis: ${weekLeftover >= 0 ? 'Plus ' : 'Minus '}${formatCurrencySpoken(Math.abs(weekLeftover))}.`;
-      heroCardWeek.setAttribute('aria-label', speechText);
-      heroCardWeek.onclick = () => { if (typeof announceNVDA === 'function') announceNVDA(speechText, true); };
     }
 
     renderAccountCardBalances(weekBalances);
@@ -4566,6 +4507,8 @@ function updateOverview() {
     renderExpenseRankings(allTx.filter(t => t.type === 'expense'));
     checkLiquidityWarning(weekBalances);
     renderBudgetsList();
+    renderOverviewCreditAccordion();
+    renderOverviewPeerLoans();
     return;
   }
 
@@ -4587,35 +4530,14 @@ function updateOverview() {
     if (expenseSummarySub) expenseSummarySub.textContent = `${stats.expenseList.length} Ausgabe(n) in diesem Monat`;
     if (transferSummarySub) transferSummarySub.textContent = `${stats.transferList.length} Umbuchung(en) & Sparpläne im ${monthName}`;
 
-    if (cardIncome) {
-      cardIncome.textContent = `+ ${formatCurrency(stats.totalIncome)}`;
-      cardIncome.setAttribute('aria-label', `Einnahmen im ${monthName}: Plus ${formatCurrencySpoken(stats.totalIncome)}`);
-    }
-    if (cardExpense) {
-      cardExpense.textContent = `- ${formatCurrency(stats.totalExpense)}`;
-      cardExpense.setAttribute('aria-label', `Ausgaben im ${monthName}: Minus ${formatCurrencySpoken(stats.totalExpense)}`);
-    }
-    if (cardTransfer) {
-      cardTransfer.textContent = formatCurrency(stats.totalTransfer || 0);
-      cardTransfer.setAttribute('aria-label', `Umbuchungen im ${monthName}: ${formatCurrencySpoken(stats.totalTransfer || 0)}`);
-    }
-    if (cardTotal) {
-      cardTotal.textContent = formatCurrency(stats.balances.total);
-      cardTotal.setAttribute('aria-label', `Gesamtguthaben Ende ${monthName} ${selectedYear}: ${formatCurrencySpoken(stats.balances.total)}`);
-    }
+    if (cardIncome) cardIncome.textContent = `+ ${formatCurrency(stats.totalIncome)}`;
+    if (cardExpense) cardExpense.textContent = `- ${formatCurrency(stats.totalExpense)}`;
+    if (cardTransfer) cardTransfer.textContent = formatCurrency(stats.totalTransfer || 0);
+    if (cardTotal) cardTotal.textContent = formatCurrency(stats.balances.total);
 
     if (monthLeftover) {
       monthLeftover.textContent = (stats.leftover >= 0 ? '+ ' : '') + formatCurrency(stats.leftover);
       monthLeftover.style.color = stats.leftover >= 0 ? 'var(--accent-income)' : 'var(--accent-expense)';
-      monthLeftover.setAttribute('aria-label', `Monatsergebnis ${monthName}: ${stats.leftover >= 0 ? 'Plus ' : 'Minus '}${formatCurrencySpoken(Math.abs(stats.leftover))}`);
-    }
-
-    const heroCardMonth = document.querySelector('.balance-hero-card');
-    if (heroCardMonth) {
-      heroCardMonth.setAttribute('role', 'region');
-      const speechText = `4. Gesamtguthaben Ende ${monthName}: ${formatCurrencySpoken(stats.balances.total)}. Monatsergebnis: ${stats.leftover >= 0 ? 'Plus ' : 'Minus '}${formatCurrencySpoken(Math.abs(stats.leftover))}.`;
-      heroCardMonth.setAttribute('aria-label', speechText);
-      heroCardMonth.onclick = () => { if (typeof announceNVDA === 'function') announceNVDA(speechText, true); };
     }
 
     renderAccountCardBalances(stats.balances);
@@ -4627,6 +4549,7 @@ function updateOverview() {
     checkLiquidityWarning(stats.balances);
     renderBudgetsList();
     renderOverviewCreditAccordion();
+    renderOverviewPeerLoans();
     return;
   }
 
@@ -4684,35 +4607,14 @@ function updateOverview() {
   if (expenseSummarySub) expenseSummarySub.textContent = `${allPeriodExpense.length} Ausgabe(n) im Zeitraum`;
   if (transferSummarySub) transferSummarySub.textContent = `${allPeriodTransfer.length} Umbuchung(en) im Zeitraum`;
 
-  if (cardIncome) {
-    cardIncome.textContent = `+ ${formatCurrency(grandIncome)}`;
-    cardIncome.setAttribute('aria-label', `Einnahmen im Zeitraum ${titlePeriod}: Plus ${formatCurrencySpoken(grandIncome)}`);
-  }
-  if (cardExpense) {
-    cardExpense.textContent = `- ${formatCurrency(grandExpense)}`;
-    cardExpense.setAttribute('aria-label', `Ausgaben im Zeitraum ${titlePeriod}: Minus ${formatCurrencySpoken(grandExpense)}`);
-  }
-  if (cardTransfer) {
-    cardTransfer.textContent = formatCurrency(grandTransfer);
-    cardTransfer.setAttribute('aria-label', `Umbuchungen im Zeitraum ${titlePeriod}: ${formatCurrencySpoken(grandTransfer)}`);
-  }
-  if (cardTotal) {
-    cardTotal.textContent = formatCurrency(periodEndBalances.total);
-    cardTotal.setAttribute('aria-label', `Gesamtguthaben Ende ${titlePeriod}: ${formatCurrencySpoken(periodEndBalances.total)}`);
-  }
+  if (cardIncome) cardIncome.textContent = `+ ${formatCurrency(grandIncome)}`;
+  if (cardExpense) cardExpense.textContent = `- ${formatCurrency(grandExpense)}`;
+  if (cardTransfer) cardTransfer.textContent = formatCurrency(grandTransfer);
+  if (cardTotal) cardTotal.textContent = formatCurrency(periodEndBalances.total);
 
   if (monthLeftover) {
     monthLeftover.textContent = (grandLeftover >= 0 ? '+ ' : '') + formatCurrency(grandLeftover);
     monthLeftover.style.color = grandLeftover >= 0 ? 'var(--accent-income)' : 'var(--accent-expense)';
-    monthLeftover.setAttribute('aria-label', `Gesamtergebnis im Zeitraum ${titlePeriod}: ${grandLeftover >= 0 ? 'Plus ' : 'Minus '}${formatCurrencySpoken(Math.abs(grandLeftover))}`);
-  }
-
-  const heroCardPeriod = document.querySelector('.balance-hero-card');
-  if (heroCardPeriod) {
-    heroCardPeriod.setAttribute('role', 'region');
-    const speechText = `4. Gesamtguthaben Ende ${titlePeriod}: ${formatCurrencySpoken(periodEndBalances.total)}. Gesamtergebnis: ${grandLeftover >= 0 ? 'Plus ' : 'Minus '}${formatCurrencySpoken(Math.abs(grandLeftover))}.`;
-    heroCardPeriod.setAttribute('aria-label', speechText);
-    heroCardPeriod.onclick = () => { if (typeof announceNVDA === 'function') announceNVDA(speechText, true); };
   }
 
   renderAccountCardBalances(periodEndBalances);
@@ -4742,6 +4644,7 @@ function updateOverview() {
   checkLiquidityWarning(periodEndBalances);
   renderBudgetsList();
   renderOverviewCreditAccordion();
+  renderOverviewPeerLoans();
 }
 
 function renderAccountCardBalances(balances) {
@@ -4754,27 +4657,15 @@ function renderAccountCardBalances(balances) {
     const colorClass = bal >= 0 ? 'income' : 'expense';
     const icon = acc.icon || ACCOUNT_TYPE_ICONS[acc.type] || '💳';
     const hintText = acc.hint || getAccountTypeDefaultHint(acc.type);
-    const spokenBal = formatCurrencySpoken(bal);
-    const fullSpeechLabel = `${acc.name}: Kontostand ${spokenBal}`;
 
     return `
-      <div class="account-card" 
-           role="region" 
-           tabindex="0" 
-           aria-label="${escapeHTML(fullSpeechLabel)}"
-           onclick="if (typeof announceNVDA === 'function') announceNVDA('${escapeHTML(fullSpeechLabel)}', true)"
-           style="cursor: pointer;">
-        <div class="acc-header" aria-hidden="true">
-          <span class="acc-icon">${icon}</span>
+      <div class="account-card" tabindex="0" aria-label="${escapeHTML(acc.name)}: ${formatCurrency(bal)}">
+        <div class="acc-header">
+          <span class="acc-icon" aria-hidden="true">${icon}</span>
           <span class="acc-name">${escapeHTML(acc.name)}</span>
         </div>
-        <div class="acc-balance ${colorClass}" id="acc-balance-${escapeHTML(acc.id)}" 
-             role="text" 
-             aria-label="Kontostand: ${escapeHTML(spokenBal)}">
-          ${formatCurrency(bal)}
-        </div>
-        <span class="acc-hint" aria-hidden="true">${escapeHTML(hintText)}</span>
-        <span class="sr-only">${escapeHTML(fullSpeechLabel)}. ${escapeHTML(hintText)}</span>
+        <div class="acc-balance ${colorClass}" id="acc-balance-${escapeHTML(acc.id)}">${formatCurrency(bal)}</div>
+        <span class="acc-hint">${escapeHTML(hintText)}</span>
       </div>
     `;
   }).join('');
@@ -4786,6 +4677,13 @@ function renderAccountCardBalances(balances) {
 function renderTransactionList(list, containerId, emptyText) {
   const container = document.getElementById(containerId);
   if (!container) return;
+
+  if (containerId === 'overview-transfer-items-feed') {
+    const secTrf = document.getElementById('section-transfer-container');
+    if (secTrf) {
+      secTrf.style.display = (list && list.length > 0) ? '' : 'none';
+    }
+  }
 
   if (list.length === 0) {
     container.innerHTML = `<p class="empty-state">${emptyText}</p>`;
@@ -8639,27 +8537,6 @@ function formatCurrency(num) {
   }) + ' €';
 }
 
-// Barrierefreie Sprachausgabe für Screenreader (TalkBack & NVDA) ohne verschluckte Euro-Zeichen
-function formatCurrencySpoken(num) {
-  const val = Number(num || 0);
-  if (isNaN(val)) return '0 Euro';
-  const isNegative = val < 0;
-  const absVal = Math.abs(val);
-  const euros = Math.floor(absVal);
-  const cents = Math.round((absVal - euros) * 100);
-
-  let parts = [];
-  if (isNegative) parts.push('Minus');
-
-  parts.push(`${euros.toLocaleString('de-DE')} Euro`);
-
-  if (cents > 0) {
-    parts.push(`und ${cents} Cent`);
-  }
-
-  return parts.join(' ');
-}
-
 function formatDateDisplay(dateStr) {
   if (!dateStr) return '';
   const parts = dateStr.split('-');
@@ -9231,18 +9108,23 @@ function renderOverviewCreditAccordion() {
   const container = document.getElementById('overview-credit-items-feed');
   const subText = document.getElementById('credit-summary-subtext');
   const monthCreditEl = document.getElementById('card-month-credit');
+  const sectionCredit = document.getElementById('section-credit-container');
   if (!container) return;
 
   const plans = (appState.recurring || []).filter(r => r.isInstallment && r.active);
   const totalRemaining = plans.reduce((sum, p) => sum + Number(p.installmentRemaining || 0), 0);
 
-  if (subText) subText.textContent = `${plans.length} aktive Kredite & Raten`;
-  if (monthCreditEl) monthCreditEl.textContent = formatCurrency(totalRemaining) + ' Rest';
-
   if (plans.length === 0) {
+    if (sectionCredit) sectionCredit.style.display = 'none';
+    if (subText) subText.textContent = '0 aktive Kredite & Raten';
+    if (monthCreditEl) monthCreditEl.textContent = '0,00 € Rest';
     container.innerHTML = '<p class="empty-state" style="padding: 10px; color: var(--text-muted, #666);">Aktuell keine laufenden Kredite oder Ratenkäufe vorhanden.</p>';
     return;
   }
+
+  if (sectionCredit) sectionCredit.style.display = '';
+  if (subText) subText.textContent = `${plans.length} aktive Kredite & Raten`;
+  if (monthCreditEl) monthCreditEl.textContent = formatCurrency(totalRemaining) + ' Rest';
 
   let html = '<div style="display: flex; flex-direction: column; gap: 8px;">';
   plans.forEach(plan => {
@@ -9275,6 +9157,600 @@ function renderOverviewCreditAccordion() {
   html += '</div>';
   container.innerHTML = html;
 }
+
+// ============================================================================
+// 1f. GELIEHENES & VERLIEHENES GELD (PEER LOANS & SCHULDEN)
+// ============================================================================
+
+function ensurePeerLoansInitialized() {
+  if (!appState.peerLoans || !Array.isArray(appState.peerLoans)) {
+    appState.peerLoans = [];
+  }
+}
+
+function renderOverviewPeerLoans() {
+  ensurePeerLoansInitialized();
+  const secPeer = document.getElementById('section-peer-loans-container');
+  const container = document.getElementById('overview-peer-loans-feed');
+  const subText = document.getElementById('peer-loans-summary-subtext');
+  const totalEl = document.getElementById('card-month-peer-loans');
+  if (!container) return;
+
+  const activeLoans = (appState.peerLoans || []).filter(l => !l.settled);
+
+  // Verstecken, wenn keine offenen Leihgaben vorhanden sind (so wie bei Krediten & Umbuchungen)
+  if (activeLoans.length === 0) {
+    if (secPeer) secPeer.style.display = 'none';
+    container.innerHTML = '<p class="empty-state" style="padding: 10px; color: var(--text-muted, #666);">Aktuell keine offenen geliehenen oder verliehenen Beträge vorhanden.</p>';
+    if (subText) subText.textContent = '0 offene Einträge';
+    if (totalEl) totalEl.textContent = '0,00 €';
+    return;
+  }
+
+  if (secPeer) secPeer.style.display = '';
+
+  let lentRemainingTotal = 0;
+  let borrowedRemainingTotal = 0;
+
+  activeLoans.forEach(l => {
+    const rem = Math.max(0, Number(l.amount || 0) - Number(l.paidAmount || 0));
+    if (l.type === 'lent') {
+      lentRemainingTotal += rem;
+    } else {
+      borrowedRemainingTotal += rem;
+    }
+  });
+
+  const net = lentRemainingTotal - borrowedRemainingTotal;
+  if (totalEl) {
+    if (net > 0) {
+      totalEl.textContent = `+ ${formatCurrency(net)} Forderung`;
+      totalEl.style.color = 'var(--accent-income, #2E7D32)';
+    } else if (net < 0) {
+      totalEl.textContent = `- ${formatCurrency(Math.abs(net))} Verbindlichkeit`;
+      totalEl.style.color = '#D32F2F';
+    } else {
+      totalEl.textContent = '0,00 € ausgeglichen';
+      totalEl.style.color = '#8E24AA';
+    }
+  }
+
+  if (subText) {
+    subText.textContent = `${activeLoans.length} offene Leihgabe(n) (Verliehen: ${formatCurrency(lentRemainingTotal)} | Geliehen: ${formatCurrency(borrowedRemainingTotal)})`;
+  }
+
+  let html = '<div style="display: flex; flex-direction: column; gap: 10px;">';
+  activeLoans.forEach(loan => {
+    const isLent = loan.type === 'lent';
+    const total = Number(loan.amount || 0);
+    const paid = Number(loan.paidAmount || 0);
+    const remaining = Math.max(0, total - paid);
+    const percent = total > 0 ? Math.min(100, Math.round((paid / total) * 100)) : 0;
+    const dateFormatted = formatDateGerman(loan.date);
+    const typeLabel = isLent ? '🟢 Ich habe verliehen (Forderung / Mir wird geschuldet)' : '🔴 Ich habe mir geliehen (Verbindlichkeit / Ich schulde)';
+    const typeColor = isLent ? '#2E7D32' : '#D32F2F';
+    const dueDateNotice = loan.dueDate ? ` • 📅 Rückzahlung bis: <strong>${formatDateGerman(loan.dueDate)}</strong>` : '';
+
+    html += `
+      <div style="background: var(--bg-hover, #f8f9fa); border: 2px solid ${isLent ? 'rgba(46,125,50,0.3)' : 'rgba(211,47,47,0.3)'}; border-left: 6px solid ${typeColor}; border-radius: 8px; padding: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px;">
+          <div>
+            <div style="font-size: 13px; font-weight: bold; color: ${typeColor}; margin-bottom: 2px;">
+              ${typeLabel}
+            </div>
+            <div style="font-size: 18px; font-weight: bold; color: var(--text-color);">
+              👤 ${escapeHTML(loan.person || 'Unbekannt')}
+            </div>
+            <div style="font-size: 13px; color: var(--text-muted, #666); margin-top: 3px;">
+              Ausgegeben / Erhalten am: <strong>${dateFormatted}</strong>${dueDateNotice}
+              ${loan.note ? ` • <span style="font-style: italic;">„${escapeHTML(loan.note)}“</span>` : ''}
+            </div>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-size: 12px; color: var(--text-muted, #666);">Ursprünglich: ${formatCurrency(total)}</div>
+            <div style="font-size: 19px; font-weight: bold; color: ${typeColor}; margin-top: 2px;">
+              Offen: ${formatCurrency(remaining)}
+            </div>
+          </div>
+        </div>
+
+        ${paid > 0 ? `
+          <div style="margin-top: 10px; background: rgba(0,0,0,0.03); padding: 8px; border-radius: 6px;">
+            <div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted, #666); margin-bottom: 4px;">
+              <span>Bereits zurückgezahlt: <strong>${formatCurrency(paid)}</strong> (${percent}%)</span>
+              <span>Noch offen: <strong>${formatCurrency(remaining)}</strong></span>
+            </div>
+            <div style="background: #e0e0e0; border-radius: 4px; height: 8px; overflow: hidden;">
+              <div style="width: ${percent}%; height: 100%; background: #4CAF50;"></div>
+            </div>
+          </div>
+        ` : ''}
+
+        <div style="display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center;">
+          <button type="button" class="btn btn-primary" onclick="settlePeerLoan('${loan.id}')" style="background-color: #2E7D32; font-size: 13px; padding: 6px 14px;" aria-label="Leihgabe mit ${escapeHTML(loan.person)} über ${formatCurrency(remaining)} als vollständig zurückgezahlt markieren">
+            ✅ Vollständig zurückgezahlt
+          </button>
+          <button type="button" class="btn btn-secondary" onclick="openPeerLoanRepayModal('${loan.id}')" style="font-size: 13px; padding: 6px 14px; border: 2px solid #8E24AA; color: #6A1B9A; font-weight: bold;" aria-label="Teilrückzahlung für ${escapeHTML(loan.person)} erfassen">
+            💵 Teilrückzahlung
+          </button>
+          <button type="button" class="btn btn-secondary" onclick="openPeerLoanModal('${loan.id}')" style="font-size: 13px; padding: 6px 12px;" aria-label="Leihgabe mit ${escapeHTML(loan.person)} bearbeiten">
+            ✏️ Bearbeiten
+          </button>
+          <button type="button" class="btn btn-secondary" onclick="deletePeerLoan('${loan.id}')" style="font-size: 13px; padding: 6px 12px; color: #D32F2F;" aria-label="Leihgabe mit ${escapeHTML(loan.person)} löschen">
+            🗑️ Löschen
+          </button>
+        </div>
+      </div>
+    `;
+  });
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+function populatePeerLoanAccountsDropdown(selectId) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  ensureAccountsInitialized();
+  sel.innerHTML = (appState.accounts || []).map(acc => {
+    return `<option value="${escapeHTML(acc.id)}">💳 ${escapeHTML(acc.name)}</option>`;
+  }).join('');
+}
+
+function handlePeerLoanTypeChange() {
+  const isLent = document.getElementById('peer-type-lent')?.checked;
+  const lblLent = document.getElementById('lbl-peer-type-lent');
+  const lblBorrowed = document.getElementById('lbl-peer-type-borrowed');
+  const personLabel = document.getElementById('peer-loan-person-label');
+  const autoBookText = document.getElementById('peer-loan-auto-book-text');
+
+  if (lblLent) {
+    lblLent.style.borderColor = isLent ? '#2E7D32' : 'var(--border-color)';
+    lblLent.style.background = isLent ? 'rgba(46,125,50,0.08)' : 'transparent';
+  }
+  if (lblBorrowed) {
+    lblBorrowed.style.borderColor = !isLent ? '#D32F2F' : 'var(--border-color)';
+    lblBorrowed.style.background = !isLent ? 'rgba(211,47,47,0.08)' : 'transparent';
+  }
+  if (personLabel) {
+    personLabel.textContent = isLent 
+      ? 'An wen hast du das Geld geliehen? (Name):' 
+      : 'Von wem hast du dir das Geld geliehen? (Name):';
+  }
+  if (autoBookText) {
+    autoBookText.textContent = isLent
+      ? 'Gleich als Geldausgang (Ausgabe) von diesem Konto buchen'
+      : 'Gleich als Geldeingang (Einnahme) auf dieses Konto buchen';
+  }
+}
+
+function setPeerLoanDateQuick(when) {
+  const dateInput = document.getElementById('peer-loan-date');
+  if (!dateInput) return;
+  const now = new Date();
+  if (when === 'yesterday') {
+    now.setDate(now.getDate() - 1);
+  }
+  dateInput.value = now.toISOString().split('T')[0];
+  announceNVDA(`Datum gesetzt auf: ${formatDateGerman(dateInput.value)}`);
+}
+
+function openPeerLoanModal(loanId = null) {
+  ensurePeerLoansInitialized();
+  const modal = document.getElementById('peer-loan-modal');
+  if (!modal) return;
+
+  populatePeerLoanAccountsDropdown('peer-loan-account');
+
+  const editIdInput = document.getElementById('peer-loan-edit-id');
+  const personInput = document.getElementById('peer-loan-person');
+  const amountInput = document.getElementById('peer-loan-amount');
+  const dateInput = document.getElementById('peer-loan-date');
+  const dueDateInput = document.getElementById('peer-loan-due-date');
+  const accountSelect = document.getElementById('peer-loan-account');
+  const autoBookChk = document.getElementById('peer-loan-auto-book');
+  const noteInput = document.getElementById('peer-loan-note');
+  const heading = document.getElementById('peer-loan-heading');
+
+  if (loanId) {
+    const loan = appState.peerLoans.find(l => l.id === loanId);
+    if (!loan) return;
+
+    if (editIdInput) editIdInput.value = loan.id;
+    if (heading) heading.textContent = '✏️ Leihgabe bearbeiten';
+    const typeRadio = document.querySelector(`input[name="peer-loan-type"][value="${loan.type}"]`);
+    if (typeRadio) typeRadio.checked = true;
+    if (personInput) personInput.value = loan.person || '';
+    if (amountInput) amountInput.value = Number(loan.amount || 0).toFixed(2);
+    if (dateInput) dateInput.value = loan.date || new Date().toISOString().split('T')[0];
+    if (dueDateInput) dueDateInput.value = loan.dueDate || '';
+    if (accountSelect && loan.account) accountSelect.value = loan.account;
+    if (autoBookChk) {
+      autoBookChk.checked = false;
+      autoBookChk.disabled = true; // Bei Bearbeitung keine Doppelbuchung
+    }
+    if (noteInput) noteInput.value = loan.note || '';
+  } else {
+    if (editIdInput) editIdInput.value = '';
+    if (heading) heading.textContent = '🤝 Geliehenes / Verliehenes Geld erfassen';
+    const typeLent = document.getElementById('peer-type-lent');
+    if (typeLent) typeLent.checked = true;
+    if (personInput) personInput.value = '';
+    if (amountInput) amountInput.value = '';
+    if (dateInput) dateInput.value = new Date().toISOString().split('T')[0];
+    if (dueDateInput) dueDateInput.value = '';
+    if (autoBookChk) {
+      autoBookChk.checked = true;
+      autoBookChk.disabled = false;
+    }
+    if (noteInput) noteInput.value = '';
+  }
+
+  handlePeerLoanTypeChange();
+  modal.style.display = 'flex';
+  if (personInput) personInput.focus();
+}
+
+function closePeerLoanModal() {
+  const modal = document.getElementById('peer-loan-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function handleSavePeerLoan(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  ensurePeerLoansInitialized();
+
+  const editId = document.getElementById('peer-loan-edit-id')?.value;
+  const isLent = document.getElementById('peer-type-lent')?.checked;
+  const type = isLent ? 'lent' : 'borrowed';
+  const person = document.getElementById('peer-loan-person')?.value.trim();
+  const amount = parseFloat(document.getElementById('peer-loan-amount')?.value);
+  const date = document.getElementById('peer-loan-date')?.value || new Date().toISOString().split('T')[0];
+  const dueDate = document.getElementById('peer-loan-due-date')?.value || '';
+  const account = document.getElementById('peer-loan-account')?.value || '';
+  const autoBook = document.getElementById('peer-loan-auto-book')?.checked;
+  const note = document.getElementById('peer-loan-note')?.value.trim() || '';
+
+  if (!person) {
+    alert('Bitte gib den Namen der Person ein.');
+    return;
+  }
+  if (!amount || isNaN(amount) || amount <= 0) {
+    alert('Bitte gib einen gültigen Geldbetrag größer als 0 ein.');
+    return;
+  }
+
+  let txId = null;
+
+  if (editId) {
+    const loan = appState.peerLoans.find(l => l.id === editId);
+    if (loan) {
+      loan.type = type;
+      loan.person = person;
+      loan.amount = amount;
+      loan.date = date;
+      loan.dueDate = dueDate;
+      loan.account = account;
+      loan.note = note;
+      loan.updatedAt = Date.now();
+    }
+  } else {
+    // Wenn autoBook aktiv ist, buchen wir sofort eine reale Transaktion
+    if (autoBook && account) {
+      txId = 'tx_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+      if (type === 'lent') {
+        // Ausgabe: Ich verleihe Geld (Geld geht ab)
+        appState.transactions.push({
+          id: txId,
+          type: 'expense',
+          amount: amount,
+          date: date,
+          account: account,
+          category: 'Privat & Familie',
+          subCategory: 'Geld verliehen (an Freunde / Familie)',
+          memo: `Verliehen an ${person}${note ? ' (' + note + ')' : ''}`,
+          isPlanned: false,
+          isRecurring: false,
+          receiptImage: null
+        });
+      } else {
+        // Einnahme: Ich leihe mir Geld (Geld kommt rein)
+        appState.transactions.push({
+          id: txId,
+          type: 'income',
+          amount: amount,
+          date: date,
+          account: account,
+          category: 'Sonstige Einnahmen',
+          subCategory: 'Geld geliehen (von Freunden / Familie)',
+          memo: `Geliehen von ${person}${note ? ' (' + note + ')' : ''}`,
+          isPlanned: false,
+          isRecurring: false,
+          receiptImage: null
+        });
+      }
+    }
+
+    const newLoan = {
+      id: 'loan_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+      type: type,
+      person: person,
+      amount: amount,
+      paidAmount: 0,
+      date: date,
+      dueDate: dueDate,
+      account: account,
+      autoBooked: Boolean(autoBook),
+      txId: txId,
+      note: note,
+      settled: false,
+      settledDate: null,
+      repayments: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    appState.peerLoans.push(newLoan);
+  }
+
+  await saveStateToEncryptedStorage();
+  closePeerLoanModal();
+  updateOverview();
+
+  const msg = isLent 
+    ? `Verliehenes Geld an ${person} über ${formatCurrency(amount)} gespeichert.`
+    : `Geliehenes Geld von ${person} über ${formatCurrency(amount)} gespeichert.`;
+  announceNVDA(msg);
+}
+
+let activeRepayLoanId = null;
+
+function openPeerLoanRepayModal(loanId) {
+  ensurePeerLoansInitialized();
+  const loan = appState.peerLoans.find(l => l.id === loanId);
+  if (!loan) return;
+
+  activeRepayLoanId = loanId;
+  const modal = document.getElementById('peer-loan-repay-modal');
+  if (!modal) return;
+
+  populatePeerLoanAccountsDropdown('peer-loan-repay-account');
+
+  const infoEl = document.getElementById('peer-loan-repay-info');
+  const repayIdInput = document.getElementById('peer-loan-repay-id');
+  const amountInput = document.getElementById('peer-loan-repay-amount');
+  const dateInput = document.getElementById('peer-loan-repay-date');
+  const autoBookText = document.getElementById('peer-loan-repay-auto-book-text');
+
+  const total = Number(loan.amount || 0);
+  const paid = Number(loan.paidAmount || 0);
+  const remaining = Math.max(0, total - paid);
+  const isLent = loan.type === 'lent';
+
+  if (repayIdInput) repayIdInput.value = loan.id;
+  if (amountInput) {
+    amountInput.value = remaining.toFixed(2);
+    amountInput.max = remaining.toFixed(2);
+  }
+  if (dateInput) dateInput.value = new Date().toISOString().split('T')[0];
+
+  if (autoBookText) {
+    autoBookText.textContent = isLent
+      ? 'Gleich als Einnahme (Rückzahlung erhalten) auf dieses Konto buchen'
+      : 'Gleich als Ausgabe (Schuld zurückgezahlt) von diesem Konto buchen';
+  }
+
+  if (infoEl) {
+    infoEl.innerHTML = `
+      <div style="font-weight: bold; font-size: 16px; margin-bottom: 4px;">
+        👤 ${escapeHTML(loan.person)} – ${isLent ? '🟢 Hat sich Geld geliehen' : '🔴 Du hast dir Geld geliehen'}
+      </div>
+      <div style="font-size: 13px; color: var(--text-color);">
+        Ursprünglich: <strong>${formatCurrency(total)}</strong> • Bereits zurückgezahlt: <strong>${formatCurrency(paid)}</strong>
+      </div>
+      <div style="font-size: 17px; font-weight: bold; color: ${isLent ? '#2E7D32' : '#D32F2F'}; margin-top: 4px;">
+        Aktuell noch offen: ${formatCurrency(remaining)}
+      </div>
+    `;
+  }
+
+  modal.style.display = 'flex';
+  if (amountInput) amountInput.focus();
+}
+
+function closePeerLoanRepayModal() {
+  const modal = document.getElementById('peer-loan-repay-modal');
+  if (modal) modal.style.display = 'none';
+  activeRepayLoanId = null;
+}
+
+function setPeerLoanRepayFull() {
+  ensurePeerLoansInitialized();
+  if (!activeRepayLoanId) return;
+  const loan = appState.peerLoans.find(l => l.id === activeRepayLoanId);
+  if (!loan) return;
+  const remaining = Math.max(0, Number(loan.amount || 0) - Number(loan.paidAmount || 0));
+  const amountInput = document.getElementById('peer-loan-repay-amount');
+  if (amountInput) amountInput.value = remaining.toFixed(2);
+}
+
+async function handleConfirmPeerLoanRepay(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  ensurePeerLoansInitialized();
+
+  const loanId = document.getElementById('peer-loan-repay-id')?.value || activeRepayLoanId;
+  const loan = appState.peerLoans.find(l => l.id === loanId);
+  if (!loan) return;
+
+  const repayAmount = parseFloat(document.getElementById('peer-loan-repay-amount')?.value);
+  const repayDate = document.getElementById('peer-loan-repay-date')?.value || new Date().toISOString().split('T')[0];
+  const repayAccount = document.getElementById('peer-loan-repay-account')?.value || '';
+  const autoBook = document.getElementById('peer-loan-repay-auto-book')?.checked;
+  const repayNote = document.getElementById('peer-loan-repay-note')?.value.trim() || '';
+
+  if (!repayAmount || isNaN(repayAmount) || repayAmount <= 0) {
+    alert('Bitte gib einen gültigen Rückzahlungsbetrag größer als 0 ein.');
+    return;
+  }
+
+  const remainingBefore = Math.max(0, Number(loan.amount || 0) - Number(loan.paidAmount || 0));
+  if (repayAmount > remainingBefore + 0.01) {
+    if (!confirm(`Der eingegebene Betrag (${formatCurrency(repayAmount)}) ist höher als die offene Restschuld (${formatCurrency(remainingBefore)}). Möchtest du ihn trotzdem so buchen?`)) {
+      return;
+    }
+  }
+
+  let txId = null;
+  if (autoBook && repayAccount) {
+    txId = 'tx_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+    if (loan.type === 'lent') {
+      // Einnahme: Freund zahlt Geld an mich zurück
+      appState.transactions.push({
+        id: txId,
+        type: 'income',
+        amount: repayAmount,
+        date: repayDate,
+        account: repayAccount,
+        category: 'Sonstige Einnahmen',
+        subCategory: 'Rückzahlung von geliehenem Geld (Freunde / Familie)',
+        memo: `Rückzahlung von ${loan.person}${repayNote ? ' (' + repayNote + ')' : ''}`,
+        isPlanned: false,
+        isRecurring: false,
+        receiptImage: null
+      });
+    } else {
+      // Ausgabe: Ich zahle geliehenes Geld an Freund zurück
+      appState.transactions.push({
+        id: txId,
+        type: 'expense',
+        amount: repayAmount,
+        date: repayDate,
+        account: repayAccount,
+        category: 'Privat & Familie',
+        subCategory: 'Rückzahlung geliehenes Geld',
+        memo: `Rückzahlung an ${loan.person}${repayNote ? ' (' + repayNote + ')' : ''}`,
+        isPlanned: false,
+        isRecurring: false,
+        receiptImage: null
+      });
+    }
+  }
+
+  if (!Array.isArray(loan.repayments)) loan.repayments = [];
+  loan.repayments.push({
+    id: 'repay_' + Date.now(),
+    amount: repayAmount,
+    date: repayDate,
+    account: repayAccount,
+    note: repayNote,
+    txId: txId
+  });
+
+  loan.paidAmount = Number(loan.paidAmount || 0) + repayAmount;
+  if (loan.paidAmount >= Number(loan.amount || 0)) {
+    loan.settled = true;
+    loan.settledDate = repayDate;
+  }
+  loan.updatedAt = Date.now();
+
+  await saveStateToEncryptedStorage();
+  closePeerLoanRepayModal();
+  updateOverview();
+
+  const isComplete = loan.settled;
+  const msg = isComplete
+    ? `Rückzahlung über ${formatCurrency(repayAmount)} verbucht. Die Leihgabe mit ${loan.person} ist nun vollständig beglichen!`
+    : `Rückzahlung über ${formatCurrency(repayAmount)} von ${loan.person} verbucht. Neuer Restbetrag: ${formatCurrency(Math.max(0, loan.amount - loan.paidAmount))}.`;
+  announceNVDA(msg);
+}
+
+async function settlePeerLoan(loanId) {
+  ensurePeerLoansInitialized();
+  const loan = appState.peerLoans.find(l => l.id === loanId);
+  if (!loan) return;
+
+  const remaining = Math.max(0, Number(loan.amount || 0) - Number(loan.paidAmount || 0));
+  const isLent = loan.type === 'lent';
+
+  const confirmMsg = isLent
+    ? `Möchtest du die Leihgabe mit "${loan.person}" über noch offene ${formatCurrency(remaining)} als VOLLSTÄNDIG zurückgezahlt abhaken?`
+    : `Möchtest du deine Schuld bei "${loan.person}" über noch offene ${formatCurrency(remaining)} als VOLLSTÄNDIG zurückgezahlt abhaken?`;
+
+  if (!confirm(confirmMsg)) return;
+
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  // Optional fragen nach Kontogutschrift/Abbuchung
+  const bookAccount = confirm(`Soll der Restbetrag von ${formatCurrency(remaining)} auch als ${isLent ? 'Geldeingang (Einnahme)' : 'Geldausgang (Ausgabe)'} auf dein Konto gebucht werden?`);
+  if (bookAccount) {
+    const acc = loan.account || (appState.accounts && appState.accounts[0] ? appState.accounts[0].id : 'bank');
+    const txId = 'tx_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+    if (isLent) {
+      appState.transactions.push({
+        id: txId,
+        type: 'income',
+        amount: remaining,
+        date: todayStr,
+        account: acc,
+        category: 'Sonstige Einnahmen',
+        subCategory: 'Rückzahlung von geliehenem Geld (Freunde / Familie)',
+        memo: `Vollständige Rückzahlung von ${loan.person}`,
+        isPlanned: false,
+        isRecurring: false,
+        receiptImage: null
+      });
+    } else {
+      appState.transactions.push({
+        id: txId,
+        type: 'expense',
+        amount: remaining,
+        date: todayStr,
+        account: acc,
+        category: 'Privat & Familie',
+        subCategory: 'Rückzahlung geliehenes Geld',
+        memo: `Vollständige Rückzahlung an ${loan.person}`,
+        isPlanned: false,
+        isRecurring: false,
+        receiptImage: null
+      });
+    }
+  }
+
+  loan.paidAmount = loan.amount;
+  loan.settled = true;
+  loan.settledDate = todayStr;
+  loan.updatedAt = Date.now();
+
+  await saveStateToEncryptedStorage();
+  updateOverview();
+  announceNVDA(`Leihgabe mit ${loan.person} als vollständig zurückgezahlt markiert.`);
+}
+
+async function deletePeerLoan(loanId) {
+  ensurePeerLoansInitialized();
+  const loan = appState.peerLoans.find(l => l.id === loanId);
+  if (!loan) return;
+
+  if (!confirm(`Möchtest du den Eintrag für "${loan.person}" über ${formatCurrency(loan.amount)} wirklich löschen?`)) {
+    return;
+  }
+
+  appState.peerLoans = appState.peerLoans.filter(l => l.id !== loanId);
+  await saveStateToEncryptedStorage();
+  updateOverview();
+  announceNVDA(`Eintrag für ${loan.person} gelöscht.`);
+}
+
+// Global functions attached to window for inline HTML onclick handlers
+window.openPeerLoanModal = openPeerLoanModal;
+window.closePeerLoanModal = closePeerLoanModal;
+window.handlePeerLoanTypeChange = handlePeerLoanTypeChange;
+window.setPeerLoanDateQuick = setPeerLoanDateQuick;
+window.handleSavePeerLoan = handleSavePeerLoan;
+window.openPeerLoanRepayModal = openPeerLoanRepayModal;
+window.closePeerLoanRepayModal = closePeerLoanRepayModal;
+window.setPeerLoanRepayFull = setPeerLoanRepayFull;
+window.handleConfirmPeerLoanRepay = handleConfirmPeerLoanRepay;
+window.settlePeerLoan = settlePeerLoan;
+window.deletePeerLoan = deletePeerLoan;
 
 
 function handleTransferAccountsChange() {
@@ -9856,6 +10332,16 @@ function disconnectSyncPairing() {
   if (targetDevInput) targetDevInput.value = '';
   if (targetCodeInput) targetCodeInput.value = '';
 
+  try {
+    const port = window.__LOCAL_PORT__ || 48123;
+    const headers = (typeof getVaultApiHeaders === 'function') ? getVaultApiHeaders({ 'Content-Type': 'application/json' }) : { 'Content-Type': 'application/json' };
+    fetch(`http://127.0.0.1:${port}/api/save_pairing`, {
+      method: 'POST',
+      headers: headers,
+      body: '{}'
+    }).catch(() => {});
+  } catch(e) {}
+
   if (typeof SyncEngine !== 'undefined') {
     SyncEngine.generateNewPairingCode();
   }
@@ -10105,6 +10591,24 @@ async function handleStartSync(e) {
 
   if (!targetName || !targetCode) {
     alert('Bitte gib den Smartphone-Namen und den Kopplungscode ein!');
+    return;
+  }
+
+  const isAndroid = !!window.__IS_ANDROID__ || 
+                    (typeof Capacitor !== 'undefined' && Capacitor.isNativePlatform && Capacitor.isNativePlatform()) || 
+                    /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+  const myDevice = (typeof SyncEngine !== 'undefined' && typeof SyncEngine.getDeviceName === 'function') ? SyncEngine.getDeviceName() : '';
+  if (!isAndroid && (targetName.toLowerCase() === 'computer' || targetName.toLowerCase() === 'pc' || (myDevice && targetName.toLowerCase() === myDevice.toLowerCase()))) {
+    const msg = '⚠️ Bitte gib den Namen deines Smartphones ein (z. B. Handy-XXXX), nicht deinen eigenen Computer. Den Gerätenamen findest du auf deinem Smartphone unter Reiter 8 (Smartphone-Sync).';
+    if (statusBox) {
+      statusBox.style.display = 'block';
+      statusBox.style.background = 'rgba(239, 68, 68, 0.15)';
+      statusBox.style.color = '#b91c1c';
+      statusBox.textContent = msg;
+    }
+    if (typeof announceNVDA === 'function') announceNVDA(msg, true);
+    else alert(msg);
     return;
   }
 
