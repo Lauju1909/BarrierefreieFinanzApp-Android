@@ -278,7 +278,9 @@ body { font-family: var(--font-family); font-size: var(--font-size-base); line-h
 .accordion-content { padding: 12px; border-top: 1px solid var(--border-subtle); background-color: var(--bg-surface); }
 
 .accounts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
-.account-card { background-color: var(--bg-surface); border: 2px solid var(--border-subtle); border-radius: var(--radius-md); padding: 16px; display: flex; flex-direction: column; gap: 4px; }
+.account-card { background-color: var(--bg-surface); border: 2px solid var(--border-subtle); border-radius: var(--radius-md); padding: 16px; display: flex; flex-direction: column; gap: 4px; cursor: pointer; user-select: none; transition: transform 0.1s ease, box-shadow 0.1s ease, border-color 0.1s ease; min-height: 80px; }
+.account-card:hover, .account-card:focus { border-color: var(--accent-action, #0288D1); box-shadow: 0 4px 12px rgba(0,0,0,0.12); outline: 3px solid var(--accent-action, #0288D1); outline-offset: 2px; }
+.account-card:active { transform: scale(0.98); }
 .acc-header { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: bold; }
 .acc-balance { font-size: 24px; font-weight: 800; color: var(--text-primary); margin: 4px 0; }
 .acc-hint { font-size: 14px; color: var(--text-muted); }

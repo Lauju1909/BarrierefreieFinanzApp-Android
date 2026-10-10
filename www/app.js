@@ -4037,17 +4037,123 @@ function updateTodayDisplay() {
 }
 
 // ----------------------------------------------------------------------------
-// 3. BARRIEREFREIE NVDA SCREENREADER ANKÜNDIGUNGEN
+// 3. BARRIEREFREIE NVDA & TALKBACK SCREENREADER ANKÜNDIGUNGEN & SPRACHAUSGABE
 // ----------------------------------------------------------------------------
+let lastSpeechUtterance = null;
+
+function isAndroidEnvironment() {
+  const ua = (navigator.userAgent || navigator.vendor || window.opera || '').toLowerCase();
+  return !!window.Capacitor || ua.includes('android');
+}
+
+function formatCurrencyForSpeech(num) {
+  const val = Number(num || 0);
+  const isNeg = val < 0;
+  const absVal = Math.abs(val);
+  const euros = Math.floor(absVal);
+  const cents = Math.round((absVal - euros) * 100);
+
+  let result = '';
+  if (isNeg) result += 'Minus ';
+  result += `${euros} Euro`;
+  if (cents > 0) {
+    result += ` und ${cents} Cent`;
+  }
+  return result;
+}
+
+function speakAccessibility(message, options = {}) {
+  if (!message) return;
+  const { assertive = false, forceTts = false } = options;
+
+  // 1. DOM Live-Region für Desktop-NVDA und Basis-Screenreader
+  announceNVDA(message, assertive);
+
+  // 2. Web Speech API (TalkBack / Android WebView Sprachausgabe)
+  const isAndroid = isAndroidEnvironment();
+  if (('speechSynthesis' in window) && (isAndroid || forceTts)) {
+    try {
+      window.speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(message);
+      utter.lang = 'de-DE';
+      utter.rate = isAndroid ? 0.95 : 1.0;
+      utter.pitch = 1.0;
+      lastSpeechUtterance = utter;
+      window.speechSynthesis.speak(utter);
+    } catch (e) {
+      console.warn('SpeechSynthesis error:', e);
+    }
+  }
+
+  // 3. Sanftes haptisches Feedback auf Mobilgeräten
+  if (window.navigator && window.navigator.vibrate) {
+    try { window.navigator.vibrate(25); } catch(e) {}
+  }
+}
+
 function announceNVDA(message, assertive = false) {
   const regionId = assertive ? 'sr-live-assertive' : 'sr-live';
   const region = document.getElementById(regionId);
   if (!region) return;
 
+  // Für Android TalkBack: Vorherigen Inhalt zuverlässig ablösen
   region.textContent = '';
   setTimeout(() => {
     region.textContent = message;
-  }, 60);
+  }, 70);
+}
+
+// Spezielles Vorlesen eines einzelnen Kontos beim Antippen / Fokus
+function speakAccountBalance(accId) {
+  ensureAccountsInitialized();
+  const acc = appState.accounts.find(a => a.id === accId);
+  if (!acc) return;
+
+  const balances = window.__lastCalculatedBalances || {};
+  const bal = balances[acc.id] !== undefined ? balances[acc.id] : (balances[acc.type] !== undefined ? balances[acc.type] : 0);
+  const spokenBal = formatCurrencyForSpeech(bal);
+  const hintText = acc.hint || getAccountTypeDefaultHint(acc.type) || '';
+
+  const msg = `Konto ${acc.name}: Kontostand beträgt ${spokenBal}.${hintText ? ' ' + hintText : ''}`;
+  speakAccessibility(msg, { forceTts: true, assertive: true });
+}
+
+// Alle Kontostände im aktuellen Zeitraum komplett vorlesen
+function speakOverviewBalances() {
+  ensureAccountsInitialized();
+  const balances = window.__lastCalculatedBalances || {};
+  const accounts = appState.accounts || [];
+
+  if (accounts.length === 0) {
+    speakAccessibility('Es sind keine Konten hinterlegt.', { forceTts: true, assertive: true });
+    return;
+  }
+
+  const parts = [];
+  const totalBal = balances.total !== undefined ? balances.total : accounts.reduce((sum, a) => sum + (balances[a.id] || 0), 0);
+  parts.push(`Dein gesamter Kontostand über alle Konten beträgt ${formatCurrencyForSpeech(totalBal)}.`);
+
+  accounts.forEach(acc => {
+    const bal = balances[acc.id] !== undefined ? balances[acc.id] : (balances[acc.type] !== undefined ? balances[acc.type] : 0);
+    parts.push(`${acc.name}: ${formatCurrencyForSpeech(bal)}.`);
+  });
+
+  const fullMsg = parts.join(' ');
+  speakAccessibility(fullMsg, { forceTts: true, assertive: true });
+}
+
+// Gesamtes Guthaben und Periodenergebnis vorlesen
+function speakTotalSummary() {
+  const balances = window.__lastCalculatedBalances || {};
+  const totalBal = balances.total !== undefined ? balances.total : 0;
+  const leftoverEl = document.getElementById('month-leftover-display');
+  const leftoverText = leftoverEl ? leftoverEl.textContent.trim() : '';
+
+  let msg = `Dein gesamtes verfügbares Guthaben beträgt ${formatCurrencyForSpeech(totalBal)}.`;
+  if (leftoverText) {
+    msg += ` Das Ergebnis im gewählten Zeitraum beträgt ${leftoverText.replace('€', 'Euro')}.`;
+  }
+  speakAccessibility(msg, { forceTts: true, assertive: true });
 }
 
 // ----------------------------------------------------------------------------
@@ -5101,6 +5207,7 @@ function updateOverview() {
 
 function renderAccountCardBalances(balances) {
   ensureAccountsInitialized();
+  window.__lastCalculatedBalances = balances;
   const grid = document.getElementById('overview-accounts-grid');
   if (!grid) return;
 
@@ -5108,16 +5215,19 @@ function renderAccountCardBalances(balances) {
     const bal = balances[acc.id] !== undefined ? balances[acc.id] : (balances[acc.type] !== undefined ? balances[acc.type] : 0);
     const colorClass = bal >= 0 ? 'income' : 'expense';
     const icon = acc.icon || ACCOUNT_TYPE_ICONS[acc.type] || '💳';
-    const hintText = acc.hint || getAccountTypeDefaultHint(acc.type);
+    const hintText = acc.hint || getAccountTypeDefaultHint(acc.type) || '';
+    const spokenAmount = formatCurrencyForSpeech(bal);
+    const accessibleLabel = `Konto ${escapeHTML(acc.name)}: Kontostand ${spokenAmount}.${hintText ? ' ' + escapeHTML(hintText) + '.' : ''} Zum Vorlesen tippen.`;
 
     return `
-      <div class="account-card" tabindex="0" aria-label="${escapeHTML(acc.name)}: ${formatCurrency(bal)}">
+      <div class="account-card" role="button" tabindex="0" onclick="speakAccountBalance('${escapeHTML(acc.id)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();speakAccountBalance('${escapeHTML(acc.id)}');}" aria-label="${accessibleLabel}" title="Kontostand vorlesen">
         <div class="acc-header">
           <span class="acc-icon" aria-hidden="true">${icon}</span>
           <span class="acc-name">${escapeHTML(acc.name)}</span>
+          <span class="acc-speak-icon" aria-hidden="true" style="margin-left: auto; font-size: 14px; opacity: 0.7;">🔊</span>
         </div>
-        <div class="acc-balance ${colorClass}" id="acc-balance-${escapeHTML(acc.id)}">${formatCurrency(bal)}</div>
-        <span class="acc-hint">${escapeHTML(hintText)}</span>
+        <div class="acc-balance ${colorClass}" id="acc-balance-${escapeHTML(acc.id)}" aria-hidden="true">${formatCurrency(bal)}</div>
+        <span class="acc-hint" aria-hidden="true">${escapeHTML(hintText)}</span>
       </div>
     `;
   }).join('');
@@ -9240,7 +9350,7 @@ function switchView(viewName) {
 
   if (viewName === 'overview') {
     updateOverview();
-    announceNVDA('Übersicht geöffnet.');
+    speakAccessibility('Übersicht geöffnet.');
   } else if (viewName === 'expense') {
     populateCategoriesDropdowns();
     populateAllAccountDropdowns();
@@ -9249,7 +9359,7 @@ function switchView(viewName) {
     if (expDate && !expDate.value) expDate.value = new Date().toISOString().split('T')[0];
     const expAmount = document.getElementById('exp-amount');
     if (expAmount) expAmount.focus();
-    announceNVDA('Ausgabe eintragen geöffnet.');
+    speakAccessibility('Ausgabe eintragen geöffnet.');
   } else if (viewName === 'income') {
     populateCategoriesDropdowns();
     populateAllAccountDropdowns();
@@ -9258,41 +9368,42 @@ function switchView(viewName) {
     if (incDate && !incDate.value) incDate.value = new Date().toISOString().split('T')[0];
     const incAmount = document.getElementById('inc-amount');
     if (incAmount) incAmount.focus();
-    announceNVDA('Einnahme eintragen geöffnet.');
+    speakAccessibility('Einnahme eintragen geöffnet.');
   } else if (viewName === 'transfer') {
     populateAllAccountDropdowns();
     const trfDate = document.getElementById('trf-date');
     if (trfDate && !trfDate.value) trfDate.value = new Date().toISOString().split('T')[0];
     const trfAmount = document.getElementById('trf-amount');
     if (trfAmount) trfAmount.focus();
-    announceNVDA('Umbuchen und Sparen geöffnet.');
+    speakAccessibility('Umbuchen und Sparen geöffnet.');
   } else if (viewName === 'settings') {
     renderSettingsRecurringList();
     populateBudgetCategoryDropdown();
     renderBudgetsList();
     renderSettingsInstallmentsList();
-    announceNVDA('Einstellungen geöffnet.');
+    speakAccessibility('Einstellungen geöffnet.');
   } else if (viewName === 'accounts') {
     renderAccountsViewList();
     populateSavingPotParentDropdown();
     renderSavingPotsList();
     const newNameInput = document.getElementById('new-acc-name');
     if (newNameInput) newNameInput.focus();
-    announceNVDA('Konto-Optionen und Konten verwalten (Reiter 6) geöffnet.');
-    } else if (viewName === 'shopping') {
+    speakAccessibility('Konto-Optionen und Konten verwalten (Reiter 6) geöffnet.');
+  } else if (viewName === 'shopping') {
     populateShoppingDropdowns();
     renderShoppingList();
     const newNameInput = document.getElementById('shopping-new-name');
     if (newNameInput) newNameInput.focus();
-    announceNVDA('Einkaufsliste und Checkliste (Reiter 8) geöffnet.');
+    speakAccessibility('Einkaufsliste und Checkliste (Reiter 8) geöffnet.');
   } else if (viewName === 'sync') {
     initSyncView();
+    speakAccessibility('Smartphone Sync (Reiter 9) geöffnet.');
   } else if (viewName === 'wishlist') {
     populateWishlistAccountDropdown();
     renderWishlist();
     const wishTitleInput = document.getElementById('wish-title');
     if (wishTitleInput) wishTitleInput.focus();
-    announceNVDA('Wunschliste und Sparziele (Reiter 7) geöffnet.');
+    speakAccessibility('Wunschliste und Sparziele (Reiter 7) geöffnet.');
   }
 }
 
