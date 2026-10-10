@@ -1,35 +1,10 @@
-﻿# Agent Instructions (GitHub & Build Guidelines)
+# 🤖 Hinweise für KI-Agenten (AI Agents Guide)
 
-## ⚠️ Security & Sensitive Files
-- **NEVER commit keystores:** `*.keystore`, `*.jks`, `keystore_credentials*.txt`. Keystores must stay strictly local.
-- **NEVER commit generated build artifacts:** `node_modules/`, `android/.gradle/`, `android/build/`, `android/app/build/`, `local.properties`.
+## ⚡ Automatisiertes Build-, Auto-Versioning- und Release-System
+- **Automatische Versionserhöhung:** `versionCode` und `versionName` in `android/app/build.gradle` sowie `package.json` werden bei jedem Push auf den Branch `main` **vollautomatisch durch GitHub Actions erhöht** (z. B. `versionCode + 1`, `6.9.6` -> `6.9.7`).
+- **Automatischer APK-Build & Release:** GitHub Actions baut automatisch `assembleDebug` und `assembleRelease`, erstellt das GitHub Release und hängt die APKs an.
+- **Automatischer F-Droid Sync:** GitHub Actions stößt nach dem Release vollautomatisch das Repository `Lauju1909/fdroid-repo` an, sodass Neo Store und F-Droid die neue Version sofort erhalten.
 
-## Environment Requirements
-- **Node.js:** Must be **Node.js >= 22.0.0** (Capacitor 8.5+ strictly requires Node 22).
-- **Java:** JDK 21 (Temurin).
-- **Android SDK:** Pre-installed on GitHub Actions runner (`ubuntu-latest`). Do NOT add `android-actions/setup-android` (it calls deprecated `sdkmanager tools` and fails).
-
-## Canonical Build & Sync Commands
-| Task | Command |
-|---|---|
-| Install deps | `npm ci` |
-| Sync web assets | `npx cap sync android` |
-| Local debug APK | `cd android && ./gradlew assembleDebug` |
-| Local release APK | `cd android && ./gradlew assembleRelease` |
-
-## Releases & Version Bumping
-1. Update `versionCode` and `versionName` in `android/app/build.gradle`.
-2. Update `"version"` in `package.json` to match.
-3. Commit changes: `git commit -m "chore(release): bump version to x.y.z"`.
-4. Tag: `git tag -a vx.y.z -m "Release vx.y.z"`.
-5. Push: `git push origin main --tags`.
-6. GitHub Actions (`.github/workflows/build-apk.yml`) will automatically compile the APK and attach it to the GitHub Release.
-
-## F-Droid Metadata
-- Maintain Store graphics and descriptions in `fastlane/metadata/android/de-DE/` and `en-US/`.
-- F-Droid recipe file is located in `fdroid/`.
-
-## Automatic F-Droid & Package Source Updates
-- GitHub Actions automatically compiles the APK, creates the GitHub Release, and triggers Lauju1909/fdroid-repo via PAT_TRIGGER.
-- Lauju's custom F-Droid repository updates within 2 minutes: all users with Neo Store or F-Droid receive the update notification automatically.
-- Always add the new build block to droid/*.yml and update CurrentVersion / CurrentVersionCode for upstream F-Droid (MR !51047).
+## 📌 Was KI-Agenten beachten MÜSSEN:
+1. **Keine manuellen Releases oder Versionsnummern-Änderungen erzwingen:** Features und Bugfixes normal committen. Nach dem Push auf `main` übernimmt GitHub Actions das Hochzählen des Version-Codes, das Taggen und das Veröffentlichen des Releases vollautomatisch.
+2. **Barrierefreiheit (TalkBack):** Alle Komponenten müssen 100% barrierefrei bleiben (ContentDescription, barrierefreie Fokus-Steuerung, ARIA-Live-Regionen).
