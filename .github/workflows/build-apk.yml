@@ -40,7 +40,7 @@ jobs:
       - name: Install NPM Dependencies
         run: npm ci
 
-- name: Auto-Bump Android Version in All Files
+      - name: Auto-Bump Android Version in All Files
         id: bump
         if: github.ref == 'refs/heads/main' && steps.check_skip.outputs.skip == 'false'
         run: |
