@@ -4037,123 +4037,17 @@ function updateTodayDisplay() {
 }
 
 // ----------------------------------------------------------------------------
-// 3. BARRIEREFREIE NVDA & TALKBACK SCREENREADER ANKÜNDIGUNGEN & SPRACHAUSGABE
+// 3. BARRIEREFREIE NVDA SCREENREADER ANKÜNDIGUNGEN
 // ----------------------------------------------------------------------------
-let lastSpeechUtterance = null;
-
-function isAndroidEnvironment() {
-  const ua = (navigator.userAgent || navigator.vendor || window.opera || '').toLowerCase();
-  return !!window.Capacitor || ua.includes('android');
-}
-
-function formatCurrencyForSpeech(num) {
-  const val = Number(num || 0);
-  const isNeg = val < 0;
-  const absVal = Math.abs(val);
-  const euros = Math.floor(absVal);
-  const cents = Math.round((absVal - euros) * 100);
-
-  let result = '';
-  if (isNeg) result += 'Minus ';
-  result += `${euros} Euro`;
-  if (cents > 0) {
-    result += ` und ${cents} Cent`;
-  }
-  return result;
-}
-
-function speakAccessibility(message, options = {}) {
-  if (!message) return;
-  const { assertive = false, forceTts = false } = options;
-
-  // 1. DOM Live-Region für Desktop-NVDA und Basis-Screenreader
-  announceNVDA(message, assertive);
-
-  // 2. Web Speech API (TalkBack / Android WebView Sprachausgabe)
-  const isAndroid = isAndroidEnvironment();
-  if (('speechSynthesis' in window) && (isAndroid || forceTts)) {
-    try {
-      window.speechSynthesis.cancel();
-      const utter = new SpeechSynthesisUtterance(message);
-      utter.lang = 'de-DE';
-      utter.rate = isAndroid ? 0.95 : 1.0;
-      utter.pitch = 1.0;
-      lastSpeechUtterance = utter;
-      window.speechSynthesis.speak(utter);
-    } catch (e) {
-      console.warn('SpeechSynthesis error:', e);
-    }
-  }
-
-  // 3. Sanftes haptisches Feedback auf Mobilgeräten
-  if (window.navigator && window.navigator.vibrate) {
-    try { window.navigator.vibrate(25); } catch(e) {}
-  }
-}
-
 function announceNVDA(message, assertive = false) {
   const regionId = assertive ? 'sr-live-assertive' : 'sr-live';
   const region = document.getElementById(regionId);
   if (!region) return;
 
-  // Für Android TalkBack: Vorherigen Inhalt zuverlässig ablösen
   region.textContent = '';
   setTimeout(() => {
     region.textContent = message;
-  }, 70);
-}
-
-// Spezielles Vorlesen eines einzelnen Kontos beim Antippen / Fokus
-function speakAccountBalance(accId) {
-  ensureAccountsInitialized();
-  const acc = appState.accounts.find(a => a.id === accId);
-  if (!acc) return;
-
-  const balances = window.__lastCalculatedBalances || {};
-  const bal = balances[acc.id] !== undefined ? balances[acc.id] : (balances[acc.type] !== undefined ? balances[acc.type] : 0);
-  const spokenBal = formatCurrencyForSpeech(bal);
-  const hintText = acc.hint || getAccountTypeDefaultHint(acc.type) || '';
-
-  const msg = `Konto ${acc.name}: Kontostand beträgt ${spokenBal}.${hintText ? ' ' + hintText : ''}`;
-  speakAccessibility(msg, { forceTts: true, assertive: true });
-}
-
-// Alle Kontostände im aktuellen Zeitraum komplett vorlesen
-function speakOverviewBalances() {
-  ensureAccountsInitialized();
-  const balances = window.__lastCalculatedBalances || {};
-  const accounts = appState.accounts || [];
-
-  if (accounts.length === 0) {
-    speakAccessibility('Es sind keine Konten hinterlegt.', { forceTts: true, assertive: true });
-    return;
-  }
-
-  const parts = [];
-  const totalBal = balances.total !== undefined ? balances.total : accounts.reduce((sum, a) => sum + (balances[a.id] || 0), 0);
-  parts.push(`Dein gesamter Kontostand über alle Konten beträgt ${formatCurrencyForSpeech(totalBal)}.`);
-
-  accounts.forEach(acc => {
-    const bal = balances[acc.id] !== undefined ? balances[acc.id] : (balances[acc.type] !== undefined ? balances[acc.type] : 0);
-    parts.push(`${acc.name}: ${formatCurrencyForSpeech(bal)}.`);
-  });
-
-  const fullMsg = parts.join(' ');
-  speakAccessibility(fullMsg, { forceTts: true, assertive: true });
-}
-
-// Gesamtes Guthaben und Periodenergebnis vorlesen
-function speakTotalSummary() {
-  const balances = window.__lastCalculatedBalances || {};
-  const totalBal = balances.total !== undefined ? balances.total : 0;
-  const leftoverEl = document.getElementById('month-leftover-display');
-  const leftoverText = leftoverEl ? leftoverEl.textContent.trim() : '';
-
-  let msg = `Dein gesamtes verfügbares Guthaben beträgt ${formatCurrencyForSpeech(totalBal)}.`;
-  if (leftoverText) {
-    msg += ` Das Ergebnis im gewählten Zeitraum beträgt ${leftoverText.replace('€', 'Euro')}.`;
-  }
-  speakAccessibility(msg, { forceTts: true, assertive: true });
+  }, 60);
 }
 
 // ----------------------------------------------------------------------------
@@ -4839,6 +4733,11 @@ function calculateBalancesUpToDate(targetDateStr) {
 
   appState.transactions.forEach(tx => {
     if (tx.date <= targetDateStr) {
+      // Wenn ein Teilbetrag als 'shared_no_repay' markiert ist (Fremdanteil, den die andere Person selbst gezahlt hat):
+      // Nicht vom eigenen Konto abbuchen!
+      if (tx.splitType === 'shared_no_repay') {
+        return;
+      }
       const amt = Number(tx.amount || 0);
       if (tx.type === 'income' && tx.account && balances[tx.account] !== undefined) {
         balances[tx.account] += amt;
@@ -5207,7 +5106,6 @@ function updateOverview() {
 
 function renderAccountCardBalances(balances) {
   ensureAccountsInitialized();
-  window.__lastCalculatedBalances = balances;
   const grid = document.getElementById('overview-accounts-grid');
   if (!grid) return;
 
@@ -5215,19 +5113,16 @@ function renderAccountCardBalances(balances) {
     const bal = balances[acc.id] !== undefined ? balances[acc.id] : (balances[acc.type] !== undefined ? balances[acc.type] : 0);
     const colorClass = bal >= 0 ? 'income' : 'expense';
     const icon = acc.icon || ACCOUNT_TYPE_ICONS[acc.type] || '💳';
-    const hintText = acc.hint || getAccountTypeDefaultHint(acc.type) || '';
-    const spokenAmount = formatCurrencyForSpeech(bal);
-    const accessibleLabel = `Konto ${escapeHTML(acc.name)}: Kontostand ${spokenAmount}.${hintText ? ' ' + escapeHTML(hintText) + '.' : ''} Zum Vorlesen tippen.`;
+    const hintText = acc.hint || getAccountTypeDefaultHint(acc.type);
 
     return `
-      <div class="account-card" role="button" tabindex="0" onclick="speakAccountBalance('${escapeHTML(acc.id)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();speakAccountBalance('${escapeHTML(acc.id)}');}" aria-label="${accessibleLabel}" title="Kontostand vorlesen">
+      <div class="account-card" tabindex="0" aria-label="${escapeHTML(acc.name)}: ${formatCurrency(bal)}">
         <div class="acc-header">
           <span class="acc-icon" aria-hidden="true">${icon}</span>
           <span class="acc-name">${escapeHTML(acc.name)}</span>
-          <span class="acc-speak-icon" aria-hidden="true" style="margin-left: auto; font-size: 14px; opacity: 0.7;">🔊</span>
         </div>
-        <div class="acc-balance ${colorClass}" id="acc-balance-${escapeHTML(acc.id)}" aria-hidden="true">${formatCurrency(bal)}</div>
-        <span class="acc-hint" aria-hidden="true">${escapeHTML(hintText)}</span>
+        <div class="acc-balance ${colorClass}" id="acc-balance-${escapeHTML(acc.id)}">${formatCurrency(bal)}</div>
+        <span class="acc-hint">${escapeHTML(hintText)}</span>
       </div>
     `;
   }).join('');
@@ -5301,8 +5196,16 @@ function renderTransactionList(list, containerId, emptyText) {
     let accountBadgeText = '';
     if (isTransfer) {
       accountBadgeText = `${dateFormatted} | Von: ${formatAccountName(tx.fromAccount)} ➔ An: ${formatAccountName(tx.toAccount)}`;
+    } else if (tx.splitType === 'shared_no_repay') {
+      const personStr = tx.splitPerson ? ` (Anteil ${escapeHTML(tx.splitPerson)})` : '';
+      accountBadgeText = `${dateFormatted} | 👥 Geteilt${personStr} • Nicht vom Konto abgebucht`;
     } else {
       accountBadgeText = `${dateFormatted} | ${formatAccountName(tx.account)}`;
+    }
+
+    let sharedBadge = '';
+    if (tx.splitType === 'shared_no_repay') {
+      sharedBadge = '<span class="status-badge" style="background: rgba(103, 58, 183, 0.12); color: #512DA8; border: 1px solid rgba(103, 58, 183, 0.35);">👥 Fremdanteil</span>';
     }
 
     html += `
@@ -5313,6 +5216,7 @@ function renderTransactionList(list, containerId, emptyText) {
             <span class="tx-cat-name">${categoryDisplayHtml}</span>
             <span class="tx-account-badge">${accountBadgeText}</span>
             ${statusBadge}
+            ${sharedBadge}
             ${tx.receipt ? '<span class="status-badge" style="background: rgba(2, 132, 199, 0.14); color: var(--accent-action); border: 1px solid var(--accent-action);">🧾 Beleg</span>' : ''}
             ${tx.description ? `<span class="tx-note">${tx.description}</span>` : ''}
           </div>
@@ -5846,9 +5750,7 @@ function toggleExpenseSplitPayment() {
     } else {
       renderExpenseSplitRows();
     }
-    if (typeof speakAccessibility === 'function') {
-      speakAccessibility('Split-Zahlung aktiviert. Du kannst den Betrag nun auf mehrere Konten aufteilen.');
-    } else if (typeof announceNVDA === 'function') {
+    if (typeof announceNVDA === 'function') {
       announceNVDA('Split-Zahlung aktiviert. Du kannst den Betrag nun auf mehrere Konten aufteilen.');
     }
   } else {
@@ -5857,9 +5759,7 @@ function toggleExpenseSplitPayment() {
     if (splitContainer) splitContainer.innerHTML = '';
     const summaryEl = document.getElementById('exp-split-summary');
     if (summaryEl) summaryEl.style.display = 'none';
-    if (typeof speakAccessibility === 'function') {
-      speakAccessibility('Split-Zahlung deaktiviert. Einfache Kontoauswahl wieder aktiv.');
-    } else if (typeof announceNVDA === 'function') {
+    if (typeof announceNVDA === 'function') {
       announceNVDA('Split-Zahlung deaktiviert. Einfache Kontoauswahl wieder aktiv.');
     }
   }
@@ -5873,9 +5773,7 @@ function toggleExpenseLoanFields() {
   if (isLoan) {
     const personInput = document.getElementById('exp-loan-person');
     if (personInput) personInput.focus();
-    if (typeof speakAccessibility === 'function') {
-      speakAccessibility('Leihgabe-Details für verliehenes Geld eingeblendet. Bitte gib den Namen der Person ein.');
-    } else if (typeof announceNVDA === 'function') {
+    if (typeof announceNVDA === 'function') {
       announceNVDA('Leihgabe-Details für verliehenes Geld eingeblendet. Bitte gib den Namen der Person ein.');
     }
   } else {
@@ -5885,9 +5783,7 @@ function toggleExpenseLoanFields() {
     if (dueInput) dueInput.value = '';
     const noteInput = document.getElementById('exp-loan-note');
     if (noteInput) noteInput.value = '';
-    if (typeof speakAccessibility === 'function') {
-      speakAccessibility('Leihgabe-Details ausgeblendet.');
-    } else if (typeof announceNVDA === 'function') {
+    if (typeof announceNVDA === 'function') {
       announceNVDA('Leihgabe-Details ausgeblendet.');
     }
   }
@@ -5982,9 +5878,9 @@ function renderExpenseSplitRows() {
             <strong>Teil ${idx + 1} Art:</strong>
           </label>
           <select id="exp-split-type-${idx}" class="large-select" onchange="onExpenseSplitTypeChange(${idx}, this.value)">
-            <option value="account" ${isAccount ? 'selected' : ''}>🏦 Eigenes Konto</option>
-            <option value="loan_lent" ${isLoan ? 'selected' : ''}>🤝 Verliehen (Leihgabe mit Rückzahlung)</option>
-            <option value="shared_no_repay" ${isShared ? 'selected' : ''}>👥 Geteilt (Kostenbeteiligung ohne Rückzahlung)</option>
+            <option value="account" ${isAccount ? 'selected' : ''}>🏦 Eigenes Konto (Mein Anteil, wird abgebucht)</option>
+            <option value="loan_lent" ${isLoan ? 'selected' : ''}>🤝 Verliehen (Leihgabe mit Rückzahlung, alles vorgestreckt)</option>
+            <option value="shared_no_repay" ${isShared ? 'selected' : ''}>👥 Geteilt (Fremdanteil, nicht von meinem Konto abbuchen)</option>
           </select>
         </div>
 
@@ -6056,7 +5952,7 @@ function onExpenseSplitTypeChange(idx, newType) {
 
   updateExpenseSplitSummary();
 
-  const label = (newType === 'account') ? 'Eigenes Konto' : (newType === 'loan_lent' ? 'Verliehen mit Rückzahlung' : 'Geteilt ohne Rückzahlung');
+  const label = (newType === 'account') ? 'Eigenes Konto (wird abgebucht)' : (newType === 'loan_lent' ? 'Verliehen mit Rückzahlung' : 'Geteilt ohne Rückzahlung (nicht vom Konto abbuchen)');
   if (typeof speakAccessibility === 'function') {
     speakAccessibility(label);
   } else if (typeof announceNVDA === 'function') {
@@ -6684,9 +6580,7 @@ function toggleIncomeSplitPayment() {
     } else {
       renderIncomeSplitRows();
     }
-    if (typeof speakAccessibility === 'function') {
-      speakAccessibility('Split-Einzahlung aktiviert. Du kannst den Betrag nun auf mehrere Konten aufteilen.');
-    } else if (typeof announceNVDA === 'function') {
+    if (typeof announceNVDA === 'function') {
       announceNVDA('Split-Einzahlung aktiviert. Du kannst den Betrag nun auf mehrere Konten aufteilen.');
     }
   } else {
@@ -6695,9 +6589,7 @@ function toggleIncomeSplitPayment() {
     if (splitContainer) splitContainer.innerHTML = '';
     const summaryEl = document.getElementById('inc-split-summary');
     if (summaryEl) summaryEl.style.display = 'none';
-    if (typeof speakAccessibility === 'function') {
-      speakAccessibility('Split-Einzahlung deaktiviert. Einfache Kontoauswahl wieder aktiv.');
-    } else if (typeof announceNVDA === 'function') {
+    if (typeof announceNVDA === 'function') {
       announceNVDA('Split-Einzahlung deaktiviert. Einfache Kontoauswahl wieder aktiv.');
     }
   }
@@ -6711,9 +6603,7 @@ function toggleIncomeLoanFields() {
   if (isLoan) {
     const personInput = document.getElementById('inc-loan-person');
     if (personInput) personInput.focus();
-    if (typeof speakAccessibility === 'function') {
-      speakAccessibility('Leihgabe-Details für geliehenes Geld eingeblendet. Bitte gib den Namen der Person ein.');
-    } else if (typeof announceNVDA === 'function') {
+    if (typeof announceNVDA === 'function') {
       announceNVDA('Leihgabe-Details für geliehenes Geld eingeblendet. Bitte gib den Namen der Person ein.');
     }
   } else {
@@ -6723,9 +6613,7 @@ function toggleIncomeLoanFields() {
     if (dueInput) dueInput.value = '';
     const noteInput = document.getElementById('inc-loan-note');
     if (noteInput) noteInput.value = '';
-    if (typeof speakAccessibility === 'function') {
-      speakAccessibility('Leihgabe-Details ausgeblendet.');
-    } else if (typeof announceNVDA === 'function') {
+    if (typeof announceNVDA === 'function') {
       announceNVDA('Leihgabe-Details ausgeblendet.');
     }
   }
@@ -6803,9 +6691,9 @@ function renderIncomeSplitRows() {
             <strong>Teil ${idx + 1} Art:</strong>
           </label>
           <select id="inc-split-type-${idx}" class="large-select" onchange="onIncomeSplitTypeChange(${idx}, this.value)">
-            <option value="account" ${isAccount ? 'selected' : ''}>🏦 Eigenes Ziel-Konto</option>
+            <option value="account" ${isAccount ? 'selected' : ''}>🏦 Eigenes Ziel-Konto (Wird gutgeschrieben)</option>
             <option value="loan_borrowed" ${isLoan ? 'selected' : ''}>🤝 Geliehen (Leihgabe / Schuld mit Rückzahlung)</option>
-            <option value="shared_no_repay" ${isShared ? 'selected' : ''}>👥 Geteilt (Zuschuss / Beteiligung ohne Rückzahlung)</option>
+            <option value="shared_no_repay" ${isShared ? 'selected' : ''}>👥 Geteilt (Fremdanteil, nicht auf mein Konto buchen)</option>
           </select>
         </div>
 
@@ -7561,9 +7449,9 @@ function renderEditSplitRows() {
             <strong>Teil ${idx + 1} Art:</strong>
           </label>
           <select id="edit-split-type-${idx}" class="large-select" onchange="onEditSplitTypeChange(${idx}, this.value)">
-            <option value="account" ${isAccount ? 'selected' : ''}>🏦 Eigenes Konto</option>
+            <option value="account" ${isAccount ? 'selected' : ''}>🏦 Eigenes Konto (Wird verbucht)</option>
             <option value="${optLoanValue}" ${isLoan ? 'selected' : ''}>${optLoanLabel}</option>
-            <option value="shared_no_repay" ${isShared ? 'selected' : ''}>👥 Geteilt (ohne Rückzahlung)</option>
+            <option value="shared_no_repay" ${isShared ? 'selected' : ''}>👥 Geteilt (Fremdanteil, nicht vom Konto buchen)</option>
           </select>
         </div>
 
@@ -8221,6 +8109,7 @@ async function deleteTransaction(txId) {
     // Auch dazu gehörende Leihgaben (geliehenes / verliehenes Geld) automatisch löschen
     ensurePeerLoansInitialized();
     if (appState.peerLoans && Array.isArray(appState.peerLoans)) {
+      const beforeCount = appState.peerLoans.length;
       appState.peerLoans = appState.peerLoans.filter(l => {
         // 1. Direkt per txId verknüpft
         if (l.txId && l.txId === txId) return false;
@@ -8249,7 +8138,7 @@ async function deleteTransaction(txId) {
 
     await saveStateToEncryptedStorage();
     updateOverview();
-    speakAccessibility(`Buchung über ${formatCurrency(deleted.amount)} und zugehörige Leihgaben gelöscht.`);
+    announceNVDA(`Buchung über ${formatCurrency(deleted.amount)} und zugehörige Leihgaben gelöscht.`);
   }
 }
 
@@ -9546,7 +9435,7 @@ function switchView(viewName) {
 
   if (viewName === 'overview') {
     updateOverview();
-    speakAccessibility('Übersicht geöffnet.');
+    announceNVDA('Übersicht geöffnet.');
   } else if (viewName === 'expense') {
     populateCategoriesDropdowns();
     populateAllAccountDropdowns();
@@ -9558,7 +9447,7 @@ function switchView(viewName) {
     const expDate = document.getElementById('exp-date');
     if (expDate && !expDate.value) expDate.value = new Date().toISOString().split('T')[0];
     if (expAmount) expAmount.focus();
-    speakAccessibility('Ausgabe eintragen geöffnet.');
+    announceNVDA('Ausgabe eintragen geöffnet.');
   } else if (viewName === 'income') {
     populateCategoriesDropdowns();
     populateAllAccountDropdowns();
@@ -9570,42 +9459,41 @@ function switchView(viewName) {
     const incDate = document.getElementById('inc-date');
     if (incDate && !incDate.value) incDate.value = new Date().toISOString().split('T')[0];
     if (incAmount) incAmount.focus();
-    speakAccessibility('Einnahme eintragen geöffnet.');
+    announceNVDA('Einnahme eintragen geöffnet.');
   } else if (viewName === 'transfer') {
     populateAllAccountDropdowns();
     const trfDate = document.getElementById('trf-date');
     if (trfDate && !trfDate.value) trfDate.value = new Date().toISOString().split('T')[0];
     const trfAmount = document.getElementById('trf-amount');
     if (trfAmount) trfAmount.focus();
-    speakAccessibility('Umbuchen und Sparen geöffnet.');
+    announceNVDA('Umbuchen und Sparen geöffnet.');
   } else if (viewName === 'settings') {
     renderSettingsRecurringList();
     populateBudgetCategoryDropdown();
     renderBudgetsList();
     renderSettingsInstallmentsList();
-    speakAccessibility('Einstellungen geöffnet.');
+    announceNVDA('Einstellungen geöffnet.');
   } else if (viewName === 'accounts') {
     renderAccountsViewList();
     populateSavingPotParentDropdown();
     renderSavingPotsList();
     const newNameInput = document.getElementById('new-acc-name');
     if (newNameInput) newNameInput.focus();
-    speakAccessibility('Konto-Optionen und Konten verwalten (Reiter 6) geöffnet.');
-  } else if (viewName === 'shopping') {
+    announceNVDA('Konto-Optionen und Konten verwalten (Reiter 6) geöffnet.');
+    } else if (viewName === 'shopping') {
     populateShoppingDropdowns();
     renderShoppingList();
     const newNameInput = document.getElementById('shopping-new-name');
     if (newNameInput) newNameInput.focus();
-    speakAccessibility('Einkaufsliste und Checkliste (Reiter 8) geöffnet.');
+    announceNVDA('Einkaufsliste und Checkliste (Reiter 8) geöffnet.');
   } else if (viewName === 'sync') {
     initSyncView();
-    speakAccessibility('Smartphone Sync (Reiter 9) geöffnet.');
   } else if (viewName === 'wishlist') {
     populateWishlistAccountDropdown();
     renderWishlist();
     const wishTitleInput = document.getElementById('wish-title');
     if (wishTitleInput) wishTitleInput.focus();
-    speakAccessibility('Wunschliste und Sparziele (Reiter 7) geöffnet.');
+    announceNVDA('Wunschliste und Sparziele (Reiter 7) geöffnet.');
   }
 }
 
