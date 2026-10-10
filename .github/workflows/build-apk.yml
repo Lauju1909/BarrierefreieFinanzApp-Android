@@ -40,7 +40,7 @@ jobs:
       - name: Install NPM Dependencies
         run: npm ci
 
-      - name: Auto-Bump Android Version
+- name: Auto-Bump Android Version in All Files
         id: bump
         if: github.ref == 'refs/heads/main' && steps.check_skip.outputs.skip == 'false'
         run: |
@@ -61,10 +61,28 @@ jobs:
           if [ -f package.json ]; then
             jq --arg ver "$NEW_NAME" '.version = $ver' package.json > package.tmp.json && mv package.tmp.json package.json
           fi
+
+          if [ -f www/version.json ]; then
+            jq --arg ver "$NEW_NAME" --argjson code "$NEW_CODE" 'if has("versionCode") then .versionCode = $code else . end | .version = $ver' www/version.json > www/version.tmp.json && mv www/version.tmp.json www/version.json
+          fi
+
+          if [ -f www/app.js ]; then
+            sed -i -E "s/const CURRENT_APP_VERSION = 'v[0-9.]+';/const CURRENT_APP_VERSION = 'v$NEW_NAME';/g" www/app.js
+          fi
+
+          if [ -f www/index.html ]; then
+            sed -i -E "s/(id=\"app-version-display\">v?)[0-9]+\.[0-9]+\.[0-9]+/\1$NEW_NAME/g" www/index.html
+            sed -i -E "s/(Version\s+)[0-9]+\.[0-9]+\.[0-9]+/\1$NEW_NAME/g" www/index.html
+            sed -i -E "s/(Installierte Version:\s*<[^>]+>v?)[0-9]+\.[0-9]+\.[0-9]+/\1$NEW_NAME/g" www/index.html
+          fi
           
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add android/app/build.gradle package.json
+          git add android/app/build.gradle
+          [ -f package.json ] && git add package.json
+          [ -f www/version.json ] && git add www/version.json
+          [ -f www/app.js ] && git add www/app.js
+          [ -f www/index.html ] && git add www/index.html
           git commit -m "chore(release): auto-bump version to v$NEW_NAME [skip ci]"
           git tag "v$NEW_NAME"
           git push origin main
