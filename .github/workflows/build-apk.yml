@@ -52,6 +52,13 @@ jobs:
           NEW_PATCH=$((PATCH + 1))
           NEW_NAME="${MAJOR}.${MINOR}.${NEW_PATCH}"
           
+          git fetch --tags --force
+          while git rev-parse "v$NEW_NAME" >/dev/null 2>&1 || git rev-parse "refs/tags/v$NEW_NAME" >/dev/null 2>&1; do
+            NEW_PATCH=$((NEW_PATCH + 1))
+            NEW_NAME="${MAJOR}.${MINOR}.${NEW_PATCH}"
+            NEW_CODE=$((NEW_CODE + 1))
+          done
+          
           echo "Bumping versionCode $CURRENT_CODE -> $NEW_CODE"
           echo "Bumping versionName $CURRENT_NAME -> $NEW_NAME"
           
