@@ -4706,5 +4706,12 @@ Beim Ändern einer Buchung kann die Unterkategorie jetzt direkt angepasst werden
 <script src="argon2.umd.min.js"></script>
 <script src="sync_engine.js"></script>
 <script src="app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator && (window.location.protocol === 'https:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(() => {});
+      });
+    }
+  </script>
 </body>
 </html>
