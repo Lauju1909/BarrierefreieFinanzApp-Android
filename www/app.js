@@ -12486,6 +12486,16 @@ function updateLockScreenUI(isFirstTime) {
     updateKeyFileLockScreen();
     renderScrambledPinPad();
   }, 100);
+
+  if (typeof BiometricAuth !== "undefined" && BiometricAuth.isMobile()) {
+    setTimeout(() => {
+      BiometricAuth.checkSupport().then(() => {
+        if (!isFirstTime && typeof cryptoKey === 'undefined' || !cryptoKey) {
+          BiometricAuth.checkAutoUnlock();
+        }
+      });
+    }, 450);
+  }
   const firstTimeHint = document.getElementById('first-time-hint');
   const lockHeading = document.getElementById('lock-heading');
   const lockInstructions = document.getElementById('lock-instructions');
@@ -13401,7 +13411,14 @@ async function submitFeatureFeedback(e) {
   } catch(e) {}
 
   const nl = String.fromCharCode(10);
-  const ntfyBody = 'Absender: ' + author + nl + 'Art: 💡 Neues Feedback / Idee' + nl + 'Datum: ' + now + nl + 'Nachricht: ' + message;
+  const ntfyBody = 'App: haushaltsbuch' + nl + 'Version: ' + CURRENT_APP_VERSION + nl + 'Absender: ' + author + nl + 'Art: 💡 Neues Feedback / Idee' + nl + 'Datum: ' + now + nl + 'Nachricht: ' + message;
+  try {
+    await fetch('https://ntfy.sh/lauju_app_feedback', {
+      method: 'POST',
+      headers: { 'Title': '[FinanzApp] Feedback von ' + author, 'Priority': 'default', 'Tags': 'bulb,speech_balloon,haushaltsbuch' },
+      body: ntfyBody
+    });
+  } catch(e) {}
   try {
     await fetch('https://ntfy.sh/lauju_haushaltsbuch_feedback', {
       method: 'POST',
@@ -16191,17 +16208,17 @@ const BiometricAuth = {
     try {
       // 1. NATIVES ANDROID SYSTEM (BiometricPrompt via AndroidBiometrics)
       if (window.AndroidBiometrics && typeof window.AndroidBiometrics.isAvailable === 'function') {
-        this.isSupported = window.AndroidBiometrics.isAvailable();
+        this.isSupported = Boolean(window.AndroidBiometrics.isAvailable());
       }
       // 2. WEBAUTHN (Nur auf Mobilgeräten)
       else if (this.isMobile() && window.PublicKeyCredential && 
           typeof PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === 'function') {
         this.isSupported = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
       } else {
-        this.isSupported = false;
+        this.isSupported = this.isMobile();
       }
     } catch(e) {
-      this.isSupported = false;
+      this.isSupported = this.isMobile();
     }
     this.updateUI();
     return this.isSupported;
@@ -16250,7 +16267,11 @@ const BiometricAuth = {
     }
 
     // 3. Nur wenn ein Datenspeicherstand existiert und Fingerabdruck aktiv ist
-    const hasVault = !!(localStorage.getItem(STORAGE_DATA_KEY) || (window.__DISK_VAULT__ && window.__DISK_VAULT__.vault));
+    const hasVault = !!(
+      localStorage.getItem(STORAGE_DATA_KEY) || 
+      localStorage.getItem('haushaltsbuch_vault_data') || 
+      (window.__DISK_VAULT__ && window.__DISK_VAULT__.vault)
+    );
     const isBioEnabled = localStorage.getItem('haushaltsbuch_bio_enabled') === 'true';
     const hasPinStored = !!localStorage.getItem('haushaltsbuch_bio_token');
     const isUnlocked = typeof cryptoKey !== 'undefined' && cryptoKey !== null;
@@ -16418,6 +16439,11 @@ const BiometricAuth = {
   async authenticateAndUnlock(isAuto = false) {
     if (this.isPrompting) return;
 
+    if (!isAuto) {
+      this.isCancelledForSession = false;
+      try { sessionStorage.removeItem('haushaltsbuch_bio_dismissed'); } catch(e) {}
+    }
+
     // Wenn abgebrochen und automatischer Aufruf -> abbrechen!
     if (isAuto && (this.isCancelledForSession || sessionStorage.getItem('haushaltsbuch_bio_dismissed') === 'true')) {
       return;
@@ -16442,9 +16468,13 @@ const BiometricAuth = {
         this.isPrompting = false;
         console.log('[AndroidBiometrics] Error/Cancel code:', code, msg);
         // Code 10 = ERROR_USER_CANCELED, Code 13 = ERROR_NEGATIVE_BUTTON ("Abbrechen")
-        this.isCancelledForSession = true;
-        sessionStorage.setItem('haushaltsbuch_bio_dismissed', 'true');
-        if (typeof announceNVDA === 'function') announceNVDA('Fingerabdruck abgebrochen. Bitte PIN manuell eingeben.');
+        if (code === 10 || code === 13) {
+          this.isCancelledForSession = true;
+          try { sessionStorage.setItem('haushaltsbuch_bio_dismissed', 'true'); } catch(e) {}
+          if (typeof announceNVDA === 'function') announceNVDA('Fingerabdruck abgebrochen. Bitte PIN manuell eingeben.');
+        } else {
+          if (typeof announceNVDA === 'function') announceNVDA('Fingerabdruck nicht erkannt: ' + (msg || 'Bitte erneut versuchen oder PIN eingeben.'));
+        }
         const pinInput = document.getElementById('pin-input');
         if (pinInput) pinInput.focus();
       };

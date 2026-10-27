@@ -35,10 +35,38 @@ public class MainActivity extends BridgeActivity {
         public boolean isAvailable() {
             try {
                 BiometricManager biometricManager = BiometricManager.from(activity);
-                int canAuth = biometricManager.canAuthenticate(
-                    BiometricManager.Authenticators.BIOMETRIC_STRONG | BiometricManager.Authenticators.BIOMETRIC_WEAK
-                );
-                return canAuth == BiometricManager.BIOMETRIC_SUCCESS;
+                // 1. Zuerst BIOMETRIC_STRONG (Standard für Fingerabdruck auf allen Android-Versionen)
+                int canAuth = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG);
+                if (canAuth == BiometricManager.BIOMETRIC_SUCCESS) {
+                    return true;
+                }
+                // 2. Fallback: canAuthenticate() ohne Parameter (maximale Kompatibilität für Android 9/10)
+                try {
+                    int noArgAuth = biometricManager.canAuthenticate();
+                    if (noArgAuth == BiometricManager.BIOMETRIC_SUCCESS) {
+                        return true;
+                    }
+                } catch (Exception ignored) {}
+                // 3. Fallback: BIOMETRIC_STRONG | BIOMETRIC_WEAK
+                try {
+                    int weakAuth = biometricManager.canAuthenticate(
+                        BiometricManager.Authenticators.BIOMETRIC_STRONG | BiometricManager.Authenticators.BIOMETRIC_WEAK
+                    );
+                    if (weakAuth == BiometricManager.BIOMETRIC_SUCCESS) {
+                        return true;
+                    }
+                } catch (Exception ignored) {}
+                // 4. Fallback: BIOMETRIC_STRONG | DEVICE_CREDENTIAL
+                try {
+                    int devAuth = biometricManager.canAuthenticate(
+                        BiometricManager.Authenticators.BIOMETRIC_STRONG | BiometricManager.Authenticators.DEVICE_CREDENTIAL
+                    );
+                    if (devAuth == BiometricManager.BIOMETRIC_SUCCESS) {
+                        return true;
+                    }
+                } catch (Exception ignored) {}
+
+                return false;
             } catch (Exception e) {
                 return false;
             }
@@ -72,13 +100,16 @@ public class MainActivity extends BridgeActivity {
                             }
                         });
 
-                        BiometricPrompt.PromptInfo promptInfo = new BiometricPrompt.PromptInfo.Builder()
+                        BiometricPrompt.PromptInfo.Builder promptBuilder = new BiometricPrompt.PromptInfo.Builder()
                             .setTitle(title != null && !title.isEmpty() ? title : "Haushaltsbuch Barrierefrei")
                             .setSubtitle(subtitle != null && !subtitle.isEmpty() ? subtitle : "Mit Fingerabdruck entsperren")
-                            .setNegativeButtonText("Abbrechen")
-                            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG | BiometricManager.Authenticators.BIOMETRIC_WEAK)
-                            .build();
+                            .setNegativeButtonText("Abbrechen");
 
+                        try {
+                            promptBuilder.setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG);
+                        } catch (Exception ignored) {}
+
+                        BiometricPrompt.PromptInfo promptInfo = promptBuilder.build();
                         biometricPrompt.authenticate(promptInfo);
                     } catch (Exception e) {
                         runJs("window.onAndroidBiometricError && window.onAndroidBiometricError(-1, '" + escapeJs(e.getMessage()) + "');");
@@ -91,8 +122,12 @@ public class MainActivity extends BridgeActivity {
             activity.runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
-                    if (webView != null) {
-                        webView.evaluateJavascript(js, null);
+                    WebView target = webView;
+                    if (target == null && activity.getBridge() != null) {
+                        target = activity.getBridge().getWebView();
+                    }
+                    if (target != null) {
+                        target.evaluateJavascript(js, null);
                     }
                 }
             });
