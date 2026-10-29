@@ -32,6 +32,37 @@ public class MainActivity extends BridgeActivity {
         }
 
         @JavascriptInterface
+        public String getDeviceName() {
+            try {
+                String deviceName = null;
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N_MR1) {
+                    try {
+                        deviceName = android.provider.Settings.Global.getString(activity.getContentResolver(), android.provider.Settings.Global.DEVICE_NAME);
+                    } catch (Exception ignored) {}
+                }
+                if (deviceName == null || deviceName.trim().isEmpty()) {
+                    try {
+                        deviceName = android.provider.Settings.Secure.getString(activity.getContentResolver(), "bluetooth_name");
+                    } catch (Exception ignored) {}
+                }
+                if (deviceName == null || deviceName.trim().isEmpty()) {
+                    String manufacturer = android.os.Build.MANUFACTURER;
+                    String model = android.os.Build.MODEL;
+                    if (model != null && manufacturer != null && model.toLowerCase().startsWith(manufacturer.toLowerCase())) {
+                        deviceName = model;
+                    } else if (manufacturer != null && model != null) {
+                        deviceName = manufacturer + " " + model;
+                    } else if (model != null) {
+                        deviceName = model;
+                    }
+                }
+                return (deviceName != null && !deviceName.trim().isEmpty()) ? deviceName.trim() : (android.os.Build.MODEL != null ? android.os.Build.MODEL : "Handy");
+            } catch (Exception e) {
+                return (android.os.Build.MODEL != null) ? android.os.Build.MODEL : "Handy";
+            }
+        }
+
+        @JavascriptInterface
         public boolean isAvailable() {
             try {
                 BiometricManager biometricManager = BiometricManager.from(activity);
