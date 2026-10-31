@@ -21,7 +21,7 @@
 <div style="display: flex; align-items: center; gap: 12px; border-bottom: 2px solid var(--border-color); padding-bottom: 12px; margin-bottom: 16px;">
 <span style="font-size: 32px;" aria-hidden="true">📜</span>
 <div>
-<h2 id="changelog-modal-heading" tabindex="-1" style="margin: 0; font-size: 24px;">Was ist neu in diesem Update? (v6.9.46)</h2>
+<h2 id="changelog-modal-heading" tabindex="-1" style="margin: 0; font-size: 24px;">Was ist neu in diesem Update? (v6.9.50)</h2>
 <span style="font-size: 15px; color: var(--sub-text);">Offizielles Änderungsprotokoll & Verbesserungen</span>
 </div>
 </div>
@@ -3760,7 +3760,7 @@ Beim Ändern einer Buchung kann die Unterkategorie jetzt direkt angepasst werden
 <p class="field-hint">Deine App aktualisiert sich beim Starten automatisch. Deine verschlüsselten Finanzdaten bleiben dabei zu 100% sicher und unverändert erhalten:</p>
  
 <div id="update-status-msg" style="font-weight: bold; color: var(--text-primary); margin: 6px 0;">
- Installierte Version: <strong>v6.9.46</strong> (Open Source auf GitHub)
+ Installierte Version: <strong>v6.9.50</strong> (Open Source auf GitHub)
 </div>
 
 <div class="form-actions" style="margin-top: 10px;">
@@ -4496,6 +4496,19 @@ Beim Ändern einer Buchung kann die Unterkategorie jetzt direkt angepasst werden
        BEREICH 1: NUR GEKOPPELTE GERÄTE & POSTFACH-ABGLEICH
        ===================================================================== -->
   <div id="sync-panel-paired" role="tabpanel" aria-labelledby="btn-sync-tab-paired" style="display: block;">
+    <!-- Eigener Gerätename (z. B. PC von Laurin) -->
+    <div id="sync-own-device-card" class="section-card" style="background: #ffffff; border: 2px solid #94a3b8; border-radius: 10px; padding: 14px 18px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+      <div>
+        <div style="font-size: 13px; color: #475569; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px;">🖥️ Dieses Gerät (Name im Sync-Netzwerk):</div>
+        <div style="font-size: 20px; font-weight: bold; color: #0f172a;" id="sync-own-device-display">PC von Laurin</div>
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <button type="button" class="btn btn-secondary" onclick="promptChangeDeviceName()" aria-label="Namen dieses PCs ändern" style="font-size: 14px; padding: 8px 14px;">
+          ✏️ <strong>PC-Namen ändern</strong>
+        </button>
+      </div>
+    </div>
+
     <!-- Hinweis wenn noch kein Gerät gekoppelt ist -->
     <div id="sync-no-paired-placeholder" class="section-card" style="display: none; text-align: center; padding: 24px; border: 2px dashed #cbd5e1; border-radius: 10px; margin-bottom: 20px;">
       <h3 style="margin: 0 0 10px 0; color: #334155;">⚪ Noch kein Gerät gekoppelt</h3>
@@ -4654,6 +4667,10 @@ Beim Ändern einer Buchung kann die Unterkategorie jetzt direkt angepasst werden
                    aria-label="Eigener Gerätename. Mit Screenreader Zeichen für Zeichen lesbar oder den Buchstabier-Button drücken."
                    style="font-size: 24px; font-weight: bold; color: #1976D2; letter-spacing: 2px; font-family: monospace; flex: 1; min-width: 160px; padding: 8px 12px; border: 1px solid #90CAF9; border-radius: 6px; background: #E3F2FD; cursor: pointer;"
                    onclick="this.select()" />
+            <button type="button" class="btn btn-secondary" onclick="promptChangeDeviceName()"
+                    aria-label="Gerätename dieses Geräts ändern" style="font-size: 14px; padding: 8px 14px;">
+              ✏️ <strong>Ändern</strong>
+            </button>
             <button type="button" class="btn btn-secondary" onclick="spellOutText(document.getElementById('sync-my-device-name').value, 'Gerätename')"
                     aria-label="Gerätename Buchstabe für Buchstabe vorlesen" style="font-size: 14px; padding: 8px 14px;">
               🔊 <strong>Buchstabieren</strong>
@@ -4702,7 +4719,7 @@ Beim Ändern einer Buchung kann die Unterkategorie jetzt direkt angepasst werden
 
 <!-- Fußzeile -->
 <footer class="app-footer" role="contentinfo">
-<p id="footer-main-text"><strong>Barrierefreie Finanzen v6.9.46</strong> – 100% Offline, AES-256 Verschlüsselung &amp; Einkaufsliste. Optimiert für NVDA.</p>
+<p id="footer-main-text"><strong>Barrierefreie Finanzen v6.9.50</strong> – 100% Offline, AES-256 Verschlüsselung &amp; Einkaufsliste. Optimiert für NVDA.</p>
 <p id="footer-shortcuts-text">Tastaturkürzel: <strong>1</strong>= Übersicht |<strong>2</strong>= Ausgabe |<strong>3</strong>= Einnahme |<strong>4</strong>= Umbuchen |<strong>5</strong>= Einstellungen |<strong>6</strong>= Konto-Optionen |<strong>7</strong>= Wunschliste |<strong>T</strong>= Zu Heute |<strong>L</strong>= Sofortsperre</p>
 </footer>
 
@@ -4711,17 +4728,5 @@ Beim Ändern einer Buchung kann die Unterkategorie jetzt direkt angepasst werden
 <script src="argon2.umd.min.js"></script>
 <script src="sync_engine.js"></script>
 <script src="app.js"></script>
-  <script>
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistrations().then(registrations => {
-        for (let r of registrations) r.unregister();
-      }).catch(() => {});
-      if (window.caches) {
-        caches.keys().then(keys => {
-          keys.forEach(k => caches.delete(k));
-        }).catch(() => {});
-      }
-    }
-  </script>
 </body>
 </html>
