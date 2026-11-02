@@ -21,7 +21,7 @@ if (typeof globalThis !== 'undefined') {
   globalThis.escapeHtml = escapeHTML;
 }
 
-const CURRENT_APP_VERSION = 'v6.9.49';
+const CURRENT_APP_VERSION = 'v6.9.57';
 
 const _nativeParseFloat = globalThis.parseFloat;
 function parseEuroInput(val) {
@@ -16069,6 +16069,9 @@ function editSyncConnection() {
 }
 
 function initLockScreenSync() {
+  if (typeof SyncEngine !== "undefined" && typeof SyncEngine.restorePersistentState === "function") {
+    SyncEngine.restorePersistentState();
+  }
   if (typeof SyncEngine === 'undefined') return;
 
   updateSyncConnectedUI();

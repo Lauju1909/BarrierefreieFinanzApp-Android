@@ -63,6 +63,39 @@ public class MainActivity extends BridgeActivity {
         }
 
         @JavascriptInterface
+        public void setPreference(String key, String value) {
+            try {
+                if (key == null || key.trim().isEmpty()) return;
+                android.content.SharedPreferences prefs = activity.getSharedPreferences("haushaltsbuch_sync_storage", android.content.Context.MODE_PRIVATE);
+                if (value == null) {
+                    prefs.edit().remove(key).apply();
+                } else {
+                    prefs.edit().putString(key, value).apply();
+                }
+            } catch (Exception ignored) {}
+        }
+
+        @JavascriptInterface
+        public String getPreference(String key) {
+            try {
+                if (key == null || key.trim().isEmpty()) return null;
+                android.content.SharedPreferences prefs = activity.getSharedPreferences("haushaltsbuch_sync_storage", android.content.Context.MODE_PRIVATE);
+                return prefs.getString(key, null);
+            } catch (Exception e) {
+                return null;
+            }
+        }
+
+        @JavascriptInterface
+        public void removePreference(String key) {
+            try {
+                if (key == null || key.trim().isEmpty()) return;
+                android.content.SharedPreferences prefs = activity.getSharedPreferences("haushaltsbuch_sync_storage", android.content.Context.MODE_PRIVATE);
+                prefs.edit().remove(key).apply();
+            } catch (Exception ignored) {}
+        }
+
+        @JavascriptInterface
         public boolean isAvailable() {
             try {
                 BiometricManager biometricManager = BiometricManager.from(activity);
