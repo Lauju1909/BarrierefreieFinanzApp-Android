@@ -21,7 +21,7 @@
 <div style="display: flex; align-items: center; gap: 12px; border-bottom: 2px solid var(--border-color); padding-bottom: 12px; margin-bottom: 16px;">
 <span style="font-size: 32px;" aria-hidden="true">📜</span>
 <div>
-<h2 id="changelog-modal-heading" tabindex="-1" style="margin: 0; font-size: 24px;">Was ist neu in diesem Update? (v6.9.51)</h2>
+<h2 id="changelog-modal-heading" tabindex="-1" style="margin: 0; font-size: 24px;">Was ist neu in diesem Update? (v6.9.59)</h2>
 <span style="font-size: 15px; color: var(--sub-text);">Offizielles Änderungsprotokoll & Verbesserungen</span>
 </div>
 </div>
@@ -882,7 +882,7 @@ Beim Ändern einer Buchung kann die Unterkategorie jetzt direkt angepasst werden
 <div id="edit-tx-category-section">
   <div class="form-group">
     <label for="edit-tx-cat-search" class="field-label"><strong>Kategorie-Schnellsuche:</strong></label>
-    <input type="text" id="edit-tx-cat-search" class="large-input" placeholder="Tippe z. B. Rewe, Miete, Gehalt..." oninput="handleEditCategorySearch()">
+    <input type="text" id="edit-tx-cat-search" class="large-input" placeholder="Tippe z. B. Rewe, Miete, Gehalt..." oninput="handleEditCategorySearch()" onkeydown="handleEditCategorySearchKey(event)">
   </div>
   <div class="form-row-2">
     <div class="form-group">
@@ -2140,7 +2140,7 @@ Beim Ändern einer Buchung kann die Unterkategorie jetzt direkt angepasst werden
   </div>
   <p class="field-hint" id="quick-add-cat-hint">Füge blitzschnell eine neue Kategorie oder ein neues Geschäft hinzu, ohne die Einstellungen öffnen zu müssen:</p>
 
-  <form id="quick-add-cat-form" onsubmit="handleQuickAddCategorySubmit(event)" class="accessible-form" style="margin-top: 12px;">
+  <form id="quick-add-cat-form" onsubmit="handleQuickAddCategorySubmit(event); return false;" class="accessible-form" style="margin-top: 12px;">
     <input type="hidden" id="quick-cat-target-context" value="exp">
 
     <div class="form-row-2">
@@ -2922,7 +2922,7 @@ Beim Ändern einer Buchung kann die Unterkategorie jetzt direkt angepasst werden
 <label for="exp-cat-search" class="field-label">
 <span>🔍<strong>Kategorie oder Laden schnell suchen (z. B. Aldi, Lidl, Rewe, Miete, Netflix):</strong></span>
 </label>
-<input type="text" id="exp-cat-search" class="large-input" placeholder="Tippe z. B. 'Rewe', 'Lidl', 'Aldi', 'Netflix', 'Tanken', 'Miete'..." oninput="handleCategorySearch('exp')" autocomplete="off">
+<input type="text" id="exp-cat-search" class="large-input" placeholder="Tippe z. B. 'Rewe', 'Lidl', 'Aldi', 'Netflix', 'Tanken', 'Miete'..." oninput="handleCategorySearch('exp')" onkeydown="handleCategorySearchKey(event, 'exp')" autocomplete="off">
 </div>
 
 <div class="form-row-2">
@@ -3760,7 +3760,7 @@ Beim Ändern einer Buchung kann die Unterkategorie jetzt direkt angepasst werden
 <p class="field-hint">Deine App aktualisiert sich beim Starten automatisch. Deine verschlüsselten Finanzdaten bleiben dabei zu 100% sicher und unverändert erhalten:</p>
  
 <div id="update-status-msg" style="font-weight: bold; color: var(--text-primary); margin: 6px 0;">
- Installierte Version: <strong>v6.9.51</strong> (Open Source auf GitHub)
+ Installierte Version: <strong>v6.9.59</strong> (Open Source auf GitHub)
 </div>
 
 <div class="form-actions" style="margin-top: 10px;">
@@ -4719,7 +4719,7 @@ Beim Ändern einer Buchung kann die Unterkategorie jetzt direkt angepasst werden
 
 <!-- Fußzeile -->
 <footer class="app-footer" role="contentinfo">
-<p id="footer-main-text"><strong>Barrierefreie Finanzen v6.9.51</strong> – 100% Offline, AES-256 Verschlüsselung &amp; Einkaufsliste. Optimiert für NVDA.</p>
+<p id="footer-main-text"><strong>Barrierefreie Finanzen v6.9.59</strong> – 100% Offline, AES-256 Verschlüsselung &amp; Einkaufsliste. Optimiert für NVDA.</p>
 <p id="footer-shortcuts-text">Tastaturkürzel: <strong>1</strong>= Übersicht |<strong>2</strong>= Ausgabe |<strong>3</strong>= Einnahme |<strong>4</strong>= Umbuchen |<strong>5</strong>= Einstellungen |<strong>6</strong>= Konto-Optionen |<strong>7</strong>= Wunschliste |<strong>T</strong>= Zu Heute |<strong>L</strong>= Sofortsperre</p>
 </footer>
 
