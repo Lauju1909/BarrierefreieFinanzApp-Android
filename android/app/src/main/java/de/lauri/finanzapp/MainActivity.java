@@ -19,6 +19,7 @@ public class MainActivity extends BridgeActivity {
         WebView webView = this.bridge.getWebView();
         if (webView != null) {
             webView.addJavascriptInterface(new AndroidBiometricInterface(this, webView), "AndroidBiometrics");
+            webView.addJavascriptInterface(new RustAppCore(), "RustCore");
         }
     }
 
@@ -99,12 +100,12 @@ public class MainActivity extends BridgeActivity {
         public boolean isAvailable() {
             try {
                 BiometricManager biometricManager = BiometricManager.from(activity);
-                // 1. Zuerst BIOMETRIC_STRONG (Standard für Fingerabdruck auf allen Android-Versionen)
+                // 1. Zuerst BIOMETRIC_STRONG (Standard fÃ¼r Fingerabdruck auf allen Android-Versionen)
                 int canAuth = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG);
                 if (canAuth == BiometricManager.BIOMETRIC_SUCCESS) {
                     return true;
                 }
-                // 2. Fallback: canAuthenticate() ohne Parameter (maximale Kompatibilität für Android 9/10)
+                // 2. Fallback: canAuthenticate() ohne Parameter (maximale KompatibilitÃ¤t fÃ¼r Android 9/10)
                 try {
                     int noArgAuth = biometricManager.canAuthenticate();
                     if (noArgAuth == BiometricManager.BIOMETRIC_SUCCESS) {

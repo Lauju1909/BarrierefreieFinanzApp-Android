@@ -1,4 +1,4 @@
-name: Build Android APK & Release
+name: Build Android APK & Release (Rust Core)
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build:
-    name: Build, Package APK & Publish Release
+    name: Build Rust Core, Sign Release APK & Publish
     runs-on: ubuntu-latest
 
     steps:
@@ -46,18 +46,16 @@ jobs:
         run: |
           CURRENT_CODE=$(grep "versionCode" android/app/build.gradle | head -1 | tr -dc '0-9')
           CURRENT_NAME=$(grep "versionName" android/app/build.gradle | head -1 | sed -E 's/.*versionName\s+"([^"]+)".*/\1/')
+          git fetch --tags origin --force || true
           NEW_CODE=$((CURRENT_CODE + 1))
           
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_NAME"
           NEW_PATCH=$((PATCH + 1))
-          NEW_NAME="${MAJOR}.${MINOR}.${NEW_PATCH}"
-          
-          git fetch --tags --force
-          while git rev-parse "v$NEW_NAME" >/dev/null 2>&1 || git rev-parse "refs/tags/v$NEW_NAME" >/dev/null 2>&1; do
+          while git rev-parse "v${MAJOR}.${MINOR}.${NEW_PATCH}" >/dev/null 2>&1; do
             NEW_PATCH=$((NEW_PATCH + 1))
-            NEW_NAME="${MAJOR}.${MINOR}.${NEW_PATCH}"
             NEW_CODE=$((NEW_CODE + 1))
           done
+          NEW_NAME="${MAJOR}.${MINOR}.${NEW_PATCH}"
           
           echo "Bumping versionCode $CURRENT_CODE -> $NEW_CODE"
           echo "Bumping versionName $CURRENT_NAME -> $NEW_NAME"
@@ -75,13 +73,11 @@ jobs:
 
           if [ -f www/app.js ]; then
             sed -i -E "s/const CURRENT_APP_VERSION = 'v[0-9.]+';/const CURRENT_APP_VERSION = 'v$NEW_NAME';/g" www/app.js
+            sed -i -E "s/const APP_VERSION = 'v[0-9.]+';/const APP_VERSION = 'v$NEW_NAME';/g" www/app.js
           fi
 
           if [ -f www/index.html ]; then
             sed -i -E "s/(id=\"app-version-display\">v?)[0-9]+\.[0-9]+\.[0-9]+/\1$NEW_NAME/g" www/index.html
-            sed -i -E "s/(id=\"changelog-modal-heading\"[^>]*>Was ist neu in diesem Update\?\s*\(v?)[0-9]+\.[0-9]+\.[0-9]+/\1$NEW_NAME/g" www/index.html
-            sed -i -E "s/(Barrierefreie Finanzen v)[0-9]+\.[0-9]+\.[0-9]+/\1$NEW_NAME/g" www/index.html
-            sed -i -E "s/(Installierte Version:\s*<[^>]+>v?)[0-9]+\.[0-9]+\.[0-9]+/\1$NEW_NAME/g" www/index.html
           fi
           
           git config user.name "github-actions[bot]"
@@ -91,39 +87,11 @@ jobs:
           [ -f www/version.json ] && git add www/version.json
           [ -f www/app.js ] && git add www/app.js
           [ -f www/index.html ] && git add www/index.html
-          git commit -m "chore(release): auto-bump version to v$NEW_NAME [skip ci]"
-          git tag "v$NEW_NAME"
+          git commit -m "chore(release): auto-bump version to v$NEW_NAME [skip ci]" || true
+          git tag -f "v$NEW_NAME"
+          git pull --rebase origin main || true
           git push origin main
-          git push origin "v$NEW_NAME"
-
-      - name: Set up Java 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '21'
-
-      - name: Sync Capacitor
-        run: npx cap sync android
-
-      - name: Make Gradlew Executable
-        run: chmod +x android/gradlew
-
-      - name: Build APKs with Gradle
-        run: |
-          cd android
-          ./gradlew assembleDebug assembleRelease --no-daemon
-
-      - name: Upload Debug APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: debug-apk
-          path: android/app/build/outputs/apk/debug/*.apk
-
-      - name: Upload Release APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-apk
-          path: android/app/build/outputs/apk/release/*.apk
+          git push -f origin "v$NEW_NAME"
 
       - name: Get Target Tag
         id: target_tag
@@ -131,15 +99,85 @@ jobs:
           TAG=$(grep "versionName" android/app/build.gradle | head -1 | sed -E 's/.*versionName\s+"([^"]+)".*/\1/')
           echo "tag=v$TAG" >> $GITHUB_OUTPUT
 
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Install Rust Toolchain & Android NDK Targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - name: Rust Cargo Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "rust-core -> target"
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Compile Native Rust Core (liblauju_app_core.so) for Android ABIs
+        run: |
+          cargo install cargo-ndk --locked
+          cd rust-core
+          cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o ../android/app/src/main/jniLibs build --release
+          ls -la ../android/app/src/main/jniLibs/*/liblauju_app_core.so
+
+      - name: Make Gradlew Executable
+        run: chmod +x android/gradlew
+
+      - name: Build Signed Release APK with Gradle
+        run: |
+          cd android
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Sign & Verify Release APK (V1 + V2 + V3 F-Droid / Play Protect Standard)
+        run: |
+          TAG="${{ steps.target_tag.outputs.tag }}"
+          APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
+          if [ ! -f "$APK_PATH" ] && [ -f "android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
+            mv "android/app/build/outputs/apk/release/app-release-unsigned.apk" "$APK_PATH"
+          fi
+          rm -f android/app/build/outputs/apk/release/app-release-unsigned.apk
+          if [ -f "$APK_PATH" ]; then
+            BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
+            KS_PASS="${{ secrets.KEYSTORE_PASSWORD }}"
+            [ -z "$KS_PASS" ] && KS_PASS="LauriAndroid2026!"
+            K_ALIAS="${{ secrets.KEY_ALIAS }}"
+            [ -z "$K_ALIAS" ] && K_ALIAS="releasekey"
+            "$BUILD_TOOLS/apksigner" sign \
+              --ks android/app/release.keystore \
+              --ks-key-alias "$K_ALIAS" \
+              --ks-pass "pass:$KS_PASS" \
+              --key-pass "pass:$KS_PASS" \
+              --v1-signing-enabled true \
+              --v2-signing-enabled true \
+              --v3-signing-enabled true \
+              "$APK_PATH"
+            "$BUILD_TOOLS/apksigner" verify --print-certs -v "$APK_PATH"
+            cp "$APK_PATH" "android/app/build/outputs/apk/release/Haushaltsbuch_Barrierefrei_${TAG}.apk"
+          else
+            echo "ERROR: Release APK not found!"
+            exit 1
+          fi
+
+      - name: Upload Release APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-apk
+          path: android/app/build/outputs/apk/release/*.apk
+
       - name: Generate Changelog from Commits
         id: changelog
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         run: |
           TAG="${{ steps.target_tag.outputs.tag }}"
           CODE=$(grep "versionCode" android/app/build.gradle | head -1 | tr -dc '0-9')
-          echo "## 📝 Änderungsprotokoll für $TAG (Build-Code $CODE)" > release_notes.md
+          echo "## ðŸ“ Ã„nderungsprotokoll fÃ¼r $TAG (Build-Code $CODE)" > release_notes.md
           echo "" >> release_notes.md
-          echo "### 📱 Was hat sich geändert:" >> release_notes.md
+          echo "### ðŸ“± Was hat sich geÃ¤ndert:" >> release_notes.md
           
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || true)
           if [ -n "$PREV_TAG" ]; then
@@ -149,13 +187,13 @@ jobs:
           fi
           
           if [ -z "$COMMITS" ]; then
-            COMMITS="- Allgemeine Verbesserungen, TalkBack-Optimierungen und Barrierefreiheit"
+            COMMITS="- Nativ kompiliert mit Rust-Sicherheitskern (liblauju_app_core.so) und V1+V2+V3 Release-Signatur"
           fi
           
           echo "$COMMITS" >> release_notes.md
           echo "" >> release_notes.md
           echo "---" >> release_notes.md
-          echo "✨ *Vollautomatisch gebaut und signiert über GitHub Actions beim Push auf \`main\`.*" >> release_notes.md
+          echo "âœ¨ *Vollautomatisch gebaut mit nativem Rust-Kern (liblauju_app_core.so) und V1+V2+V3 Release-Signatur (F-Droid & Play Protect konform).*" >> release_notes.md
 
       - name: Publish GitHub Release
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
@@ -164,7 +202,6 @@ jobs:
           tag_name: ${{ steps.target_tag.outputs.tag }}
           name: "Barrierefreie Finanz-App ${{ steps.target_tag.outputs.tag }}"
           files: |
-            android/app/build/outputs/apk/debug/*.apk
             android/app/build/outputs/apk/release/*.apk
           body_path: release_notes.md
         env:
@@ -174,5 +211,6 @@ jobs:
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         run: |
           gh workflow run update-repo.yml --repo Lauju1909/fdroid-repo || true
+          
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT_TRIGGER }}
+          GITHUB_TOKEN: ${{ secrets.PAT_TRIGGER || secrets.GITHUB_TOKEN }}
