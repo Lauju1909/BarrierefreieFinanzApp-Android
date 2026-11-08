@@ -83,3 +83,25 @@ pub extern "system" fn Java_de_lauri_finanzapp_RustAppCore_sanitizeInput<'local>
         Err(_) => std::ptr::null_mut(),
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sha256_computation_and_determinism() {
+        let h1 = compute_string_sha256("test_payload_123");
+        let h2 = compute_string_sha256("test_payload_123");
+        let h3 = compute_string_sha256("other_payload_456");
+        assert_eq!(h1.len(), 64);
+        assert_eq!(h1, h2);
+        assert_ne!(h1, h3);
+    }
+
+    #[test]
+    fn test_sanitize_json_or_text() {
+        let dirty = "  hello\0world  ";
+        assert_eq!(sanitize_json_or_text(dirty), "helloworld");
+    }
+}
