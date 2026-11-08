@@ -21,7 +21,7 @@ if (typeof globalThis !== 'undefined') {
   globalThis.escapeHtml = escapeHTML;
 }
 
-const CURRENT_APP_VERSION = 'v6.9.58';
+const CURRENT_APP_VERSION = 'v6.9.68';
 
 const _nativeParseFloat = globalThis.parseFloat;
 function parseEuroInput(val) {
@@ -13560,8 +13560,9 @@ function checkChangelogOnStartup() {
   const settingChk = document.getElementById('setting-auto-changelog');
   if (settingChk) settingChk.checked = isEnabled;
 
-  // Start niemals durch blockierendes Changelog-Popup verzögern
-  setLastSeenChangelogVersion(CURRENT_APP_VERSION);
+  if (isEnabled && lastSeen !== CURRENT_APP_VERSION) {
+    openChangelogModal(false);
+  }
 }
 
 function openChangelogModal(isManualOpen) {
